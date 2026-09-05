@@ -2,7 +2,19 @@ import React from 'react';
 import { NormalizedDetection, AiSubsystemHealth } from '../../ai-inference/types';
 import { Track, MovementDirection, TrackState } from '../../tracking/types';
 import { SpatialZone } from '../../spatial/types';
-import { AlertCircle, UserCheck, Compass, Shield, ShieldAlert, ArrowRight, ArrowLeft, ArrowLeftRight } from 'lucide-react';
+import {
+  AlertCircle,
+  UserCheck,
+  Compass,
+  Shield,
+  ShieldAlert,
+  ArrowRight,
+  ArrowLeft,
+  ArrowLeftRight,
+  Car,
+  Truck,
+  User,
+} from 'lucide-react';
 
 export interface DetectionOverlayProps {
   detections: NormalizedDetection[];
@@ -97,6 +109,15 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
   const hasTracks = visibleTracks.length > 0;
   const hasDetections = detections.length > 0;
 
+  const personTrackCount = visibleTracks.filter((t) => t.objectType !== 'vehicle').length;
+  const vehicleTrackCount = visibleTracks.filter((t) => t.objectType === 'vehicle').length;
+  const trackingBadgeText =
+    vehicleTrackCount > 0 && personTrackCount > 0
+      ? `TRACKING (${personTrackCount}P · ${vehicleTrackCount}V)`
+      : vehicleTrackCount > 0
+      ? `VEHICLES (${vehicleTrackCount})`
+      : `TRACKING (${visibleTracks.length})`;
+
   // Active zones count
   const activeSpatialZones = zones.filter((z) => z.active);
   const polygonZones = activeSpatialZones.filter((z) => z.geometry === 'POLYGON');
@@ -109,7 +130,7 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
         {hasTracks ? (
           <span className="px-1.5 py-0.5 rounded bg-[#0284C7]/90 border border-[#38BDF8] text-[9px] font-mono font-bold text-white flex items-center gap-1 shadow-sm">
             <Compass className="w-2.5 h-2.5 stroke-[2.5]" />
-            TRACKING ({visibleTracks.length})
+            {trackingBadgeText}
           </span>
         ) : hasDetections ? (
           <span className="px-1.5 py-0.5 rounded bg-[#F59E0B]/90 border border-[#FBBF24] text-[9px] font-mono font-bold text-black flex items-center gap-1 shadow-sm animate-pulse">
@@ -280,7 +301,11 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
               .map((p) => `${(p.centerX * 100).toFixed(2)},${(p.centerY * 100).toFixed(2)}`)
               .join(' ');
             const isLost = track.state === 'TEMPORARILY_LOST';
-            const strokeColor = isLost ? '#F59E0B' : '#38BDF8';
+            const strokeColor = isLost
+              ? '#F59E0B'
+              : track.objectType === 'vehicle'
+              ? '#818CF8'
+              : '#38BDF8';
 
             return (
               <g key={`traj-${track.trackId}`}>
@@ -341,6 +366,7 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
       {hasTracks
         ? visibleTracks.map((track) => {
             const box = track.lastBoundingBox;
+            const isVehicle = track.objectType === 'vehicle';
             const isLost = track.state === 'TEMPORARILY_LOST';
             const leftPercent = Math.max(0, Math.min(100, box.x * 100));
             const topPercent = Math.max(0, Math.min(100, box.y * 100));
@@ -349,10 +375,23 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
             const confidencePercent = (track.currentConfidence * 100).toFixed(1);
             const dirInfo = getDirectionSymbol(track.direction);
 
-            const borderColor = isLost ? 'border-[#F59E0B]' : 'border-[#38BDF8]';
-            const bgColor = isLost ? 'bg-[#F59E0B]/10' : 'bg-[#38BDF8]/10';
-            const badgeBg = isLost ? 'bg-[#F59E0B]' : 'bg-[#0284C7]';
+            const borderColor = isLost
+              ? 'border-[#F59E0B]'
+              : isVehicle
+              ? 'border-[#818CF8]'
+              : 'border-[#38BDF8]';
+            const bgColor = isLost
+              ? 'bg-[#F59E0B]/10'
+              : isVehicle
+              ? 'bg-[#6366F1]/10'
+              : 'bg-[#38BDF8]/10';
+            const badgeBg = isLost
+              ? 'bg-[#F59E0B]'
+              : isVehicle
+              ? 'bg-[#4F46E5]'
+              : 'bg-[#0284C7]';
             const badgeText = isLost ? 'text-black' : 'text-white';
+            const displayClass = track.vehicleClass || track.class || (isVehicle ? 'VEHICLE' : 'PERSON');
 
             return (
               <div
@@ -376,10 +415,15 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
                 <div
                   className={`absolute -top-6 left-0 z-30 flex items-center gap-1.5 ${badgeBg} ${badgeText} px-1.5 py-0.5 rounded-2xs shadow-md font-mono text-[9px] font-bold tracking-tight whitespace-nowrap`}
                 >
+                  {isVehicle ? (
+                    <Car className="w-2.5 h-2.5 opacity-90" />
+                  ) : (
+                    <User className="w-2.5 h-2.5 opacity-90" />
+                  )}
                   {showTrackId && (
                     <span className="bg-black/30 px-1 rounded-2xs">{track.trackId}</span>
                   )}
-                  <span>PERSON</span>
+                  <span>{displayClass}</span>
                   <span className="opacity-90">{confidencePercent}%</span>
 
                   {showDirection && (
@@ -411,17 +455,23 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
           })
         : detections.map((detection) => {
             const { boundingBox, confidence, pixelBox, detectionId } = detection;
+            const isVehicle = detection.objectType === 'vehicle';
             const leftPercent = Math.max(0, Math.min(100, boundingBox.x * 100));
             const topPercent = Math.max(0, Math.min(100, boundingBox.y * 100));
             const widthPercent = Math.max(2, Math.min(100 - leftPercent, boundingBox.width * 100));
             const heightPercent = Math.max(2, Math.min(100 - topPercent, boundingBox.height * 100));
             const confidencePercent = (confidence * 100).toFixed(1);
+            const label = detection.class || detection.vehicleClass || (isVehicle ? 'VEHICLE' : 'PERSON');
+
+            const borderColor = isVehicle ? 'border-[#818CF8]' : 'border-[#F59E0B]';
+            const bgColor = isVehicle ? 'bg-[#6366F1]/10' : 'bg-[#F59E0B]/10';
+            const badgeBg = isVehicle ? 'bg-[#4F46E5] text-white' : 'bg-[#F59E0B] text-black';
 
             return (
               <div
                 key={detectionId}
                 id={`detection-box-${detectionId}`}
-                className="absolute border-2 border-[#F59E0B] bg-[#F59E0B]/10 transition-all duration-300 pointer-events-none z-20"
+                className={`absolute border-2 ${borderColor} ${bgColor} transition-all duration-300 pointer-events-none z-20`}
                 style={{
                   left: `${leftPercent}%`,
                   top: `${topPercent}%`,
@@ -434,8 +484,9 @@ export const DetectionOverlay: React.FC<DetectionOverlayProps> = ({
                 <div className="absolute -bottom-1 -left-1 w-2 h-2 border-b-2 border-l-2 border-white" />
                 <div className="absolute -bottom-1 -right-1 w-2 h-2 border-b-2 border-r-2 border-white" />
 
-                <div className="absolute -top-5 left-0 z-20 flex items-center gap-1 bg-[#F59E0B] text-black px-1.5 py-0.5 rounded-2xs shadow-md font-mono text-[9px] font-bold tracking-tight whitespace-nowrap">
-                  <span>PERSON</span>
+                <div className={`absolute -top-5 left-0 z-20 flex items-center gap-1 ${badgeBg} px-1.5 py-0.5 rounded-2xs shadow-md font-mono text-[9px] font-bold tracking-tight whitespace-nowrap`}>
+                  {isVehicle ? <Car className="w-2.5 h-2.5" /> : <User className="w-2.5 h-2.5" />}
+                  <span>{label}</span>
                   <span className="opacity-90">{confidencePercent}%</span>
                 </div>
 

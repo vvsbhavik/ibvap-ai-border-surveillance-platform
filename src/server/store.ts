@@ -325,6 +325,8 @@ class DataStore {
 
   // In-memory spatial events history
   spatialEvents: SpatialEvent[] = [];
+
+  cameras: Camera[] = [
     {
       id: 'cam-01',
       cameraId: 'CAM-01',
@@ -2112,6 +2114,8 @@ class DataStore {
       direction: zoneData.direction || 'BIDIRECTIONAL',
       schedule: zoneData.schedule,
       color: zoneData.color || (zoneData.geometry === 'LINE' ? '#f59e0b' : '#38bdf8'),
+      dwellWarningSeconds: zoneData.dwellWarningSeconds,
+      maxDwellSeconds: zoneData.maxDwellSeconds,
       sectorId: camera?.sectorId,
       sectorName: camera?.sectorName,
       createdBy: actorCallsign,
@@ -2159,6 +2163,8 @@ class DataStore {
     if (updates.direction !== undefined) zone.direction = updates.direction;
     if (updates.schedule !== undefined) zone.schedule = updates.schedule;
     if (updates.color !== undefined) zone.color = updates.color;
+    if (updates.dwellWarningSeconds !== undefined) zone.dwellWarningSeconds = updates.dwellWarningSeconds;
+    if (updates.maxDwellSeconds !== undefined) zone.maxDwellSeconds = updates.maxDwellSeconds;
     zone.updatedAt = new Date().toISOString();
 
     this.logAudit(

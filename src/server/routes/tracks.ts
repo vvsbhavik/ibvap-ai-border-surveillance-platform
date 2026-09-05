@@ -9,11 +9,13 @@ export const tracksRouter = Router();
  * Queries tracking records with optional camera, state, and limit filters.
  */
 tracksRouter.get('/', (req: Request, res: Response) => {
-  const { cameraId, state, limit } = req.query;
+  const { cameraId, state, objectType, class: className, limit } = req.query;
 
   const tracks = trackingService.queryTracks({
     cameraId: typeof cameraId === 'string' ? cameraId : undefined,
     state: typeof state === 'string' ? (state as TrackState) : undefined,
+    objectType: typeof objectType === 'string' ? objectType : undefined,
+    class: typeof className === 'string' ? className : undefined,
     limit: limit ? parseInt(limit as string, 10) : 50,
   });
 

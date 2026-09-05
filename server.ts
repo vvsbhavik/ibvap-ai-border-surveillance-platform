@@ -140,20 +140,23 @@ async function startServer() {
     });
   });
 
-  // Hook Multi-Object Tracking events to Spatial Intelligence Engine & DataStore event bus
-  trackingService.onTrackingEvent((event) => {
-    const cam = dataStore.cameras.find((c) => c.id === event.cameraId || c.cameraId === event.cameraId);
-    const cameraIdentifier = cam?.cameraId || event.cameraId;
+  const zoneOccupancySignatures = new Map<string, string>();
 
-    // Evaluate track against active camera-scoped spatial zones and virtual fences
+  // Continuous frame-level Multi-Object Tracking & Spatial Evaluation pipeline
+  trackingService.onTrackingFrame((frame) => {
+    const cam = dataStore.cameras.find((c) => c.id === frame.cameraId || c.cameraId === frame.cameraId);
+    const cameraIdentifier = cam?.cameraId || frame.cameraId;
+
+    // Evaluate all active and ended tracks against active camera-scoped spatial zones and fences
     const activeZones = dataStore.getSpatialZones({ cameraId: cameraIdentifier, active: true });
     if (activeZones.length > 0) {
+      const tracksToEvaluate = [...frame.tracks, ...frame.endedTracks];
       const spatialEvts = spatialEngine.evaluateCameraTracks(
         cameraIdentifier,
         cameraIdentifier,
-        [event.track],
+        tracksToEvaluate,
         activeZones,
-        event.timestamp
+        frame.timestamp
       );
 
       for (const spEvt of spatialEvts) {
@@ -168,9 +171,19 @@ async function startServer() {
           payload: spEvt,
         });
 
-        // Trigger operational alerts on restricted area intrusions or fence breaches
+        // Trigger operational alerts on restricted area intrusions, dwell violations, or fence breaches
         if (spEvt.severity === 'CRITICAL' || spEvt.severity === 'HIGH') {
           const alertId = `alt-sp-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+          const ruleType =
+            spEvt.eventType === 'fence.crossed'
+              ? 'VIRTUAL_FENCE_BREACH'
+              : spEvt.eventType === 'zone.dwell_warning'
+              ? 'ZONE_DWELL_VIOLATION'
+              : 'ZONE_INTRUSION';
+
+          const matchingTrack = tracksToEvaluate.find((t) => t.trackId === spEvt.trackId);
+          const numericId = matchingTrack?.numericId ? `#${matchingTrack.numericId}` : spEvt.trackId;
+
           const alertRecord = {
             id: alertId,
             alertId,
@@ -180,20 +193,118 @@ async function startServer() {
             zoneName: spEvt.zoneName,
             sectorId: cam?.sectorId || 'sec-bravo',
             sectorName: cam?.sectorName || 'Sector Bravo',
-            ruleType: spEvt.eventType === 'fence.crossed' ? 'VIRTUAL_FENCE_BREACH' : 'ZONE_INTRUSION',
+            ruleType,
             severity: spEvt.severity,
             status: 'NEW' as const,
-            title: `${spEvt.eventType === 'fence.crossed' ? 'Virtual Fence Breach' : 'Perimeter Zone Intrusion'}: ${spEvt.zoneName}`,
-            description: `Target Track #${event.track.numericId} triggered ${spEvt.eventType} on ${spEvt.zoneName} (${cameraIdentifier})`,
+            title: `${
+              spEvt.eventType === 'fence.crossed'
+                ? 'Virtual Fence Breach'
+                : spEvt.eventType === 'zone.dwell_warning'
+                ? 'Zone Dwell Violation'
+                : 'Perimeter Zone Intrusion'
+            }: ${spEvt.zoneName}`,
+            description: `Target Track ${numericId} triggered ${spEvt.eventType} on ${spEvt.zoneName} (${cameraIdentifier})`,
             timestamp: spEvt.timestamp,
-            firstDetectedAt: event.track.firstSeenAt,
-            lastDetectedAt: event.track.lastSeenAt,
+            firstDetectedAt: matchingTrack?.firstSeenAt || spEvt.timestamp,
+            lastDetectedAt: matchingTrack?.lastSeenAt || spEvt.timestamp,
             threatScore: spEvt.severity === 'CRITICAL' ? 95 : 80,
-            confidence: event.track.currentConfidence,
+            confidence: matchingTrack?.currentConfidence || 0.95,
             acknowledged: false,
             source: 'SPATIAL_ENGINE',
             isSimulation: false,
+            eventId: spEvt.eventId,
+            trackId: spEvt.trackId,
+            position: spEvt.position,
+            direction: spEvt.direction || spEvt.crossingDirection,
+            evidenceReference: 'unavailable',
+            escalatedToIncidentId: undefined as string | undefined,
           };
+
+          // Operational link: Link to existing active incident or escalate critical alarm
+          const existingIncident = dataStore.incidents.find(
+            (inc) =>
+              (inc.status === 'OPEN' || inc.status === 'INVESTIGATING') &&
+              (inc.primaryCameraId === cameraIdentifier ||
+                inc.primaryCameraId === cam?.id ||
+                inc.sectorId === cam?.sectorId)
+          );
+
+          if (existingIncident) {
+            alertRecord.escalatedToIncidentId = existingIncident.id;
+            existingIncident.timeline.push({
+              id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              timestamp: spEvt.timestamp,
+              actorCallsign: 'SPATIAL_ENGINE',
+              actionType: 'TRIGGER_ALARM',
+              description: `${spEvt.eventType} on ${spEvt.zoneName} by ${spEvt.trackId}`,
+              metadata: {
+                eventId: spEvt.eventId,
+                alertId,
+                trackId: spEvt.trackId,
+                zoneId: spEvt.zoneId,
+                position: spEvt.position,
+                direction: spEvt.direction || spEvt.crossingDirection,
+                severity: spEvt.severity,
+                evidenceReference: 'unavailable',
+              },
+            });
+            dataStore.broadcastEvent({
+              eventId: `evt-inc-upd-${Date.now()}`,
+              eventType: 'incident.updated',
+              timestamp: spEvt.timestamp,
+              source: cameraIdentifier,
+              payload: existingIncident,
+            });
+          } else if (spEvt.severity === 'CRITICAL') {
+            const incidentId = `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+            const incNum = `INC-${new Date().getFullYear()}-${String(dataStore.incidents.length + 1).padStart(4, '0')}`;
+            const newIncident = {
+              id: incidentId,
+              incidentNumber: incNum,
+              title: `${spEvt.eventType === 'fence.crossed' ? 'Virtual Fence Breach' : 'Perimeter Zone Intrusion'}: ${spEvt.zoneName}`,
+              summary: `Automated spatial alarm triggered by Track ${spEvt.trackId} on ${spEvt.zoneName} (${cameraIdentifier}).`,
+              severity: spEvt.severity,
+              status: 'OPEN' as const,
+              sectorId: cam?.sectorId || 'sec-bravo',
+              sectorName: cam?.sectorName || 'Sector Bravo',
+              primaryCameraId: cam?.id || cameraIdentifier,
+              primaryCameraIdentifier: cameraIdentifier,
+              leadCommanderCallsign: 'SPATIAL_WATCH',
+              createdAt: spEvt.timestamp,
+              relatedCameraIdentifiers: [cameraIdentifier],
+              evidenceCount: 1,
+              containmentNotes: `Automatic escalation from spatial ${spEvt.eventType} event ${spEvt.eventId}. Track: ${spEvt.trackId}. Evidence: unavailable.`,
+              timeline: [
+                {
+                  id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                  timestamp: spEvt.timestamp,
+                  actorCallsign: 'SPATIAL_ENGINE',
+                  actionType: 'TRIGGER_ALARM',
+                  description: `Initial ${spEvt.eventType} on ${spEvt.zoneName} by ${spEvt.trackId}`,
+                  metadata: {
+                    eventId: spEvt.eventId,
+                    alertId,
+                    trackId: spEvt.trackId,
+                    zoneId: spEvt.zoneId,
+                    position: spEvt.position,
+                    direction: spEvt.direction || spEvt.crossingDirection,
+                    severity: spEvt.severity,
+                    evidenceReference: 'unavailable',
+                  },
+                },
+              ],
+            };
+            dataStore.incidents.unshift(newIncident as any);
+            alertRecord.escalatedToIncidentId = incidentId;
+            dataStore.broadcastEvent({
+              eventId: `evt-inc-create-${incidentId}`,
+              eventType: 'incident.created',
+              timestamp: spEvt.timestamp,
+              source: cameraIdentifier,
+              payload: newIncident,
+            });
+          }
+
           dataStore.alerts.unshift(alertRecord as any);
 
           dataStore.broadcastEvent({
@@ -205,7 +316,39 @@ async function startServer() {
           });
         }
       }
+
+      // Check and dispatch zone.occupancy_changed events for active polygon zones
+      for (const zone of activeZones) {
+        if (zone.geometry === 'POLYGON') {
+          const occ = spatialEngine.getZoneOccupancy(zone, frame.tracks);
+          const sig = occ.occupantTrackIds.slice().sort().join(',');
+          const prevSig = zoneOccupancySignatures.get(zone.zoneId);
+          if (prevSig !== sig) {
+            zoneOccupancySignatures.set(zone.zoneId, sig);
+            dataStore.broadcastEvent({
+              eventId: `evt-occ-${Date.now()}-${zone.zoneId}`,
+              eventType: 'zone.occupancy_changed',
+              timestamp: frame.timestamp,
+              source: cameraIdentifier,
+              payload: {
+                zoneId: zone.zoneId,
+                cameraId: cameraIdentifier,
+                zoneName: zone.name,
+                currentOccupants: occ.currentOccupants,
+                occupantTrackIds: occ.occupantTrackIds,
+                oldestOccupantAt: occ.oldestOccupantAt,
+                updatedAt: occ.updatedAt,
+              },
+            });
+          }
+        }
+      }
     }
+  });
+
+  // Hook Multi-Object Tracking events to DataStore event bus
+  trackingService.onTrackingEvent((event) => {
+    const cam = dataStore.cameras.find((c) => c.id === event.cameraId || c.cameraId === event.cameraId);
 
     dataStore.broadcastEvent({
       eventId: event.eventId,

@@ -1,6 +1,32 @@
 import sharp from 'sharp';
 import { RawFrame } from '../video-gateway/types';
-import { BoundingBox, InferenceDevice, NormalizedDetection, PixelBoundingBox } from './types';
+import { BoundingBox, InferenceDevice, NormalizedDetection, PixelBoundingBox, VehicleClass } from './types';
+
+function mapDetectionLabel(label: string): { objectType: 'person' | 'vehicle'; vehicleClass?: VehicleClass; class: string } | null {
+  const l = (label || '').toLowerCase().trim();
+  if (l === 'person') {
+    return { objectType: 'person', class: 'PERSON' };
+  }
+  if (l === 'car' || l === 'automobile' || l === 'sedan' || l === 'suv') {
+    return { objectType: 'vehicle', vehicleClass: 'CAR', class: 'CAR' };
+  }
+  if (l === 'motorcycle' || l === 'motorbike' || l === 'moped') {
+    return { objectType: 'vehicle', vehicleClass: 'MOTORCYCLE', class: 'MOTORCYCLE' };
+  }
+  if (l === 'bus') {
+    return { objectType: 'vehicle', vehicleClass: 'BUS', class: 'BUS' };
+  }
+  if (l === 'truck' || l === 'pickup') {
+    return { objectType: 'vehicle', vehicleClass: 'TRUCK', class: 'TRUCK' };
+  }
+  if (l === 'van' || l === 'minivan') {
+    return { objectType: 'vehicle', vehicleClass: 'VAN', class: 'VAN' };
+  }
+  if (l === 'vehicle' || l === 'train' || l === 'cart') {
+    return { objectType: 'vehicle', vehicleClass: 'UNKNOWN_VEHICLE', class: 'UNKNOWN_VEHICLE' };
+  }
+  return null;
+}
 
 export interface IObjectDetector {
   readonly modelName: string;
@@ -146,14 +172,14 @@ export class YolosTinyDetector implements IObjectDetector {
     this.lastLatencyMs = Date.now() - t0;
     const inferenceTimestamp = new Date().toISOString();
 
-    // Strictly filter for label === 'person' and confidence >= threshold
-    const personDetections: NormalizedDetection[] = [];
+    // Filter for valid classes (person or vehicle) and confidence >= threshold
+    const detections: NormalizedDetection[] = [];
 
     for (let i = 0; i < rawResults.length; i++) {
       const item = rawResults[i];
 
-      // Filter: Only PERSON class, only above threshold
-      if (item.label.toLowerCase() !== 'person') {
+      const mapped = mapDetectionLabel(item.label);
+      if (!mapped) {
         continue;
       }
 
@@ -181,12 +207,14 @@ export class YolosTinyDetector implements IObjectDetector {
         ymax: Math.round(ymax * frame.height),
       };
 
-      personDetections.push({
+      detections.push({
         detectionId: `det-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
         cameraId: frame.cameraId,
         timestamp: frame.timestamp,
         inferenceTimestamp,
-        objectType: 'person',
+        objectType: mapped.objectType,
+        vehicleClass: mapped.vehicleClass,
+        class: mapped.class,
         confidence: Number(item.score.toFixed(4)),
         boundingBox,
         pixelBox,
@@ -195,6 +223,6 @@ export class YolosTinyDetector implements IObjectDetector {
       });
     }
 
-    return personDetections;
+    return detections;
   }
 }

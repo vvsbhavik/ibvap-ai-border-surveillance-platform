@@ -17,7 +17,7 @@ import {
   CheckCircle2,
   RefreshCw,
 } from 'lucide-react';
-import { Camera, User, SpatialZone, SpatialEvent, SpatialZoneType, SpatialGeometryType, SpatialCrossingDirection } from '../../server/types';
+import { Camera, User, SpatialZone, SpatialEvent, SpatialZoneType, SpatialGeometryType, SpatialCrossingDirection, ZoneOccupancy } from '../../server/types';
 import { api } from '../../api/client';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
@@ -32,6 +32,7 @@ export interface CameraSpatialTabProps {
 export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, currentUser }) => {
   const [zones, setZones] = useState<SpatialZone[]>([]);
   const [recentEvents, setRecentEvents] = useState<SpatialEvent[]>([]);
+  const [occupancies, setOccupancies] = useState<Record<string, ZoneOccupancy>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -45,6 +46,8 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
   const [direction, setDirection] = useState<SpatialCrossingDirection>('BIDIRECTIONAL');
   const [severity, setSeverity] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>('HIGH');
   const [color, setColor] = useState('#EF4444');
+  const [dwellWarningSeconds, setDwellWarningSeconds] = useState<string>('');
+  const [maxDwellSeconds, setMaxDwellSeconds] = useState<string>('');
   const [presetCoords, setPresetCoords] = useState<'CENTRAL_RESTRICTED' | 'PERIMETER_FENCE' | 'BUFFER_CORRIDOR' | 'WEST_BORDER_LINE'>('CENTRAL_RESTRICTED');
 
   const canCreate = currentUser ? hasPermission(currentUser.role, 'zone.create') : false;
@@ -56,9 +59,10 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
 
   const fetchZonesAndEvents = async () => {
     try {
-      const [zonesRes, eventsRes] = await Promise.allSettled([
+      const [zonesRes, eventsRes, occRes] = await Promise.allSettled([
         api.zones.getCameraZones(camIdentifier),
         api.zones.getEvents({ cameraId: camIdentifier, limit: 15 }),
+        api.zones.getOccupancy({ cameraId: camIdentifier }),
       ]);
 
       if (zonesRes.status === 'fulfilled' && zonesRes.value?.zones) {
@@ -66,6 +70,13 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
       }
       if (eventsRes.status === 'fulfilled' && eventsRes.value?.events) {
         setRecentEvents(eventsRes.value.events);
+      }
+      if (occRes.status === 'fulfilled' && occRes.value?.occupancies) {
+        const occMap: Record<string, ZoneOccupancy> = {};
+        for (const occ of occRes.value.occupancies) {
+          occMap[occ.zoneId] = occ;
+        }
+        setOccupancies(occMap);
       }
     } catch {
       // ignore
@@ -177,6 +188,8 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
         direction: geometry === 'LINE' ? direction : undefined,
         severity,
         color,
+        dwellWarningSeconds: dwellWarningSeconds ? Number(dwellWarningSeconds) : undefined,
+        maxDwellSeconds: maxDwellSeconds ? Number(maxDwellSeconds) : undefined,
         active: true,
       });
 
@@ -184,6 +197,8 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
         setActionSuccess(`Zone "${res.zone.name}" created successfully.`);
         setName('');
         setDescription('');
+        setDwellWarningSeconds('');
+        setMaxDwellSeconds('');
         setIsCreating(false);
         fetchZonesAndEvents();
       }
@@ -338,6 +353,39 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
               </select>
             </div>
 
+            {geometry === 'POLYGON' && (
+              <>
+                <div>
+                  <label className="text-[10px] font-mono text-[#6C727A] uppercase block mb-1">
+                    Dwell Warning Threshold (sec)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="3600"
+                    value={dwellWarningSeconds}
+                    onChange={(e) => setDwellWarningSeconds(e.target.value)}
+                    placeholder="e.g. 5 (optional)"
+                    className="w-full bg-[#14161A] border border-[#23262B] rounded px-2 py-1.5 text-xs text-white focus:border-[#007AFF] outline-hidden font-mono placeholder:text-[#6C727A]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-mono text-[#6C727A] uppercase block mb-1">
+                    Max Dwell Hard Cap (sec)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="7200"
+                    value={maxDwellSeconds}
+                    onChange={(e) => setMaxDwellSeconds(e.target.value)}
+                    placeholder="e.g. 30 (optional)"
+                    className="w-full bg-[#14161A] border border-[#23262B] rounded px-2 py-1.5 text-xs text-white focus:border-[#007AFF] outline-hidden font-mono placeholder:text-[#6C727A]"
+                  />
+                </div>
+              </>
+            )}
+
             <div>
               <label className="text-[10px] font-mono text-[#6C727A] uppercase block mb-1">Coordinate Geometry Preset</label>
               <select
@@ -371,6 +419,37 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
         </form>
       )}
 
+      {/* Real-time Occupancy & Spatial Intelligence HUD */}
+      {zones.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <div className="p-2.5 bg-[#14161A] border border-[#23262B] rounded">
+            <span className="text-[10px] font-mono text-[#6C727A] uppercase block">Active Boundaries</span>
+            <span className="text-base font-bold font-mono text-white">
+              {zones.filter((z) => z.active).length} / {zones.length}
+            </span>
+          </div>
+          <div className="p-2.5 bg-[#14161A] border border-[#23262B] rounded">
+            <span className="text-[10px] font-mono text-[#6C727A] uppercase block">Total Zone Occupants</span>
+            <span className="text-base font-bold font-mono text-[#38BDF8] flex items-center gap-1.5">
+              <Users className="w-4 h-4" />
+              {Object.values(occupancies).reduce((acc, o) => acc + (o.currentOccupants || 0), 0)}
+            </span>
+          </div>
+          <div className="p-2.5 bg-[#14161A] border border-[#23262B] rounded">
+            <span className="text-[10px] font-mono text-[#6C727A] uppercase block">Polygons Monitored</span>
+            <span className="text-base font-bold font-mono text-[#F59E0B]">
+              {zones.filter((z) => z.geometry === 'POLYGON').length}
+            </span>
+          </div>
+          <div className="p-2.5 bg-[#14161A] border border-[#23262B] rounded">
+            <span className="text-[10px] font-mono text-[#6C727A] uppercase block">Virtual Fence Lines</span>
+            <span className="text-base font-bold font-mono text-[#10B981]">
+              {zones.filter((z) => z.geometry === 'LINE').length}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Active Boundaries List */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -390,7 +469,9 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
           <div className="grid grid-cols-1 gap-2.5">
             {zones.map((z) => {
               const isPolygon = z.geometry === 'POLYGON';
-              const occupantCount = z.currentOccupants?.length || 0;
+              const liveOcc = occupancies[z.zoneId];
+              const occupantCount = liveOcc !== undefined ? liveOcc.currentOccupants : (z.currentOccupants?.length || 0);
+              const occupantTrackIds = liveOcc !== undefined ? liveOcc.occupantTrackIds : (z.currentOccupants || []);
               const zoneColor = z.color || '#EF4444';
 
               return (
@@ -421,6 +502,12 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
                         <span className="px-1.5 py-0.2 rounded bg-[#0F1115] border border-[#23262B] text-[9px] font-mono text-[#8C929D]">
                           {isPolygon ? 'POLYGON ZONE' : `VIRTUAL FENCE [${z.direction || 'BIDIRECTIONAL'}]`}
                         </span>
+                        {occupantCount > 0 && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-[#EF4444]/20 border border-[#EF4444]/50 text-[9px] font-mono text-[#EF4444] font-bold animate-pulse">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#EF4444]" />
+                            {occupantCount} ACTIVE OCCUPANT{occupantCount > 1 ? 'S' : ''}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#6C727A] font-mono">
@@ -431,12 +518,22 @@ export const CameraSpatialTab: React.FC<CameraSpatialTabProps> = ({ camera, curr
                           Occupants: {occupantCount}
                         </span>
                         <span>Vertices: {z.coordinates?.length || 0}</span>
+                        {z.dwellWarningSeconds && z.dwellWarningSeconds > 0 && (
+                          <span className="text-[#F59E0B]">
+                            Dwell Warning: &gt;{z.dwellWarningSeconds}s
+                          </span>
+                        )}
+                        {z.maxDwellSeconds && z.maxDwellSeconds > 0 && (
+                          <span className="text-[#EF4444]">
+                            Max Dwell: {z.maxDwellSeconds}s
+                          </span>
+                        )}
                       </div>
 
-                      {occupantCount > 0 && z.currentOccupants && (
+                      {occupantCount > 0 && occupantTrackIds.length > 0 && (
                         <div className="flex flex-wrap items-center gap-1 mt-1 pt-1 border-t border-[#23262B]">
-                          <span className="text-[10px] text-[#F59E0B] font-mono font-bold">Active Targets:</span>
-                          {z.currentOccupants.map((occTrackId) => (
+                          <span className="text-[10px] text-[#F59E0B] font-mono font-bold">Track Occupants:</span>
+                          {occupantTrackIds.map((occTrackId) => (
                             <span
                               key={occTrackId}
                               className="px-1.5 py-0.2 bg-[#F59E0B]/20 border border-[#F59E0B]/50 rounded text-[9px] font-mono text-[#F59E0B]"

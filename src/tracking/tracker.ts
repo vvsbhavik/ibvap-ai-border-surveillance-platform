@@ -185,9 +185,11 @@ export class CameraTracker {
     const existingTrackList = Array.from(this.activeTracks.values());
     let associationOperations = 0;
 
-    // Filter detections strictly for this camera and person class
+    // Filter detections strictly for this camera and supported classes (person or vehicle)
     const validDetections = detections.filter(
-      (d) => (d.cameraId === this.cameraId || !d.cameraId) && d.objectType === 'person'
+      (d) =>
+        (d.cameraId === this.cameraId || !d.cameraId) &&
+        (d.objectType === 'person' || d.objectType === 'vehicle')
     );
 
     // 1. Build Candidate Matches Matrix
@@ -209,6 +211,12 @@ export class CameraTracker {
 
       for (let d = 0; d < validDetections.length; d++) {
         const detection = validDetections[d];
+
+        // Strict category gating: person tracks NEVER associate with vehicle detections, and vice-versa
+        if (track.objectType !== detection.objectType) {
+          continue;
+        }
+
         associationOperations++;
 
         const iou = computeIoU(predictedBox, detection.boundingBox);
@@ -274,6 +282,10 @@ export class CameraTracker {
       track.lastBoundingBox = { ...detection.boundingBox };
       if (detection.pixelBox) {
         track.lastPixelBox = { ...detection.pixelBox };
+      }
+      if (detection.vehicleClass && (!track.vehicleClass || track.vehicleClass === 'UNKNOWN_VEHICLE')) {
+        track.vehicleClass = detection.vehicleClass;
+        track.class = detection.class || detection.vehicleClass;
       }
       track.lastSeenAt = detection.timestamp || frameTimestamp;
       track.currentConfidence = detection.confidence;
@@ -346,7 +358,8 @@ export class CameraTracker {
     frameTimestamp: string
   ): Track {
     const numericId = this.nextNumericId++;
-    const trackId = `TRK-${this.cameraId}-${String(numericId).padStart(4, '0')}`;
+    const prefix = detection.objectType === 'vehicle' ? 'VEH' : 'TRK';
+    const trackId = `${prefix}-${this.cameraId}-${String(numericId).padStart(4, '0')}`;
     const timestamp = detection.timestamp || frameTimestamp;
     const centroid = getCentroid(detection.boundingBox);
 
@@ -363,7 +376,9 @@ export class CameraTracker {
       trackId,
       numericId,
       cameraId: this.cameraId,
-      objectType: 'person',
+      objectType: detection.objectType || 'person',
+      vehicleClass: detection.vehicleClass,
+      class: detection.class || (detection.objectType === 'vehicle' ? (detection.vehicleClass || 'CAR') : 'PERSON'),
       createdAt: timestamp,
       firstSeenAt: timestamp,
       lastSeenAt: timestamp,

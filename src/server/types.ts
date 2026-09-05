@@ -328,6 +328,40 @@ export interface AnprRecord {
   timestamp: string;
   thumbnailUrl?: string;
   isSimulation?: boolean;
+
+  // Rich ANPR Subsystem Fields
+  vehicleTrackId?: string;
+  normalizedPlate?: string;
+  rawPlateText?: string;
+  vehicleClass?: string;
+  recognitionStatus?: 'CONFIRMED' | 'PROBABLE' | 'UNCERTAIN' | 'UNREADABLE' | 'DETECTED';
+  observationCount?: number;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  confidences?: {
+    vehicle: number;
+    plate: number;
+    ocr: number;
+    association: number;
+    overall: number;
+  };
+  spatialContext?: {
+    zoneId?: string;
+    zoneName?: string;
+    recentZoneId?: string;
+    isInsideRestrictedZone?: boolean;
+    lastFenceCrossed?: string;
+    direction?: string;
+    dwellTimeSeconds?: number;
+    sectorId?: string;
+    sectorName?: string;
+  };
+  evidenceReference?: {
+    evidenceId?: string;
+    frameReference?: string;
+    mediaType?: string;
+    thumbnailUrl?: string;
+  };
 }
 
 export interface WatchlistEntry {

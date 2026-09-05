@@ -210,14 +210,21 @@ export function runSpatialVerification(): {
   // Frame 1: Track-01 starts OUTSIDE at (0.1, 0.4)
   const track1Outside: Track = {
     trackId: 'TRK-001',
+    numericId: 1,
     cameraId: 'CAM-01',
     objectType: 'person',
+    createdAt: new Date().toISOString(),
     state: 'ACTIVE',
     firstSeenAt: new Date().toISOString(),
     lastSeenAt: new Date().toISOString(),
     ageFrames: 1,
+    detectionCount: 1,
     missedFrames: 0,
     currentConfidence: 0.92,
+    direction: 'EAST',
+    dwellTimeSeconds: 1,
+    contributingDetectionIds: ['det-001'],
+    modelVersion: 'v1.0.0',
     lastBoundingBox: { x: 0.05, y: 0.35, width: 0.1, height: 0.1 }, // Footprint: (0.1, 0.45)
     trajectory: [{ x: 0.1, y: 0.45, timestamp: new Date().toISOString() }],
   };
@@ -293,6 +300,173 @@ export function runSpatialVerification(): {
   };
   const eventsFrame6 = engine.evaluateCameraTracks('CAM-01', 'CAM-01', [track1Ended], mockZones);
   assert(eventsFrame6.length === 0, suite4, 'Ending an already-exited track emits no extraneous events and cleans up');
+
+  // --------------------------------------------------------------------------
+  // 5. Live Occupancy, Continuous Multi-Track Evaluation & Dwell Warnings
+  // --------------------------------------------------------------------------
+  const suite5 = 'Live Occupancy & Dwell Warning Engine';
+
+  const dwellEngine = new SpatialEngine();
+  const testZoneWithDwell: SpatialZone = {
+    zoneId: 'zone-dwell-test',
+    cameraId: 'CAM-01',
+    cameraIdentifier: 'CAM-01',
+    name: 'Restricted Storage Depot',
+    type: 'RESTRICTED_AREA',
+    geometry: 'POLYGON',
+    coordinates: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.5, y: 0.1 },
+      { x: 0.5, y: 0.5 },
+      { x: 0.1, y: 0.5 },
+    ],
+    active: true,
+    severity: 'CRITICAL',
+    dwellWarningSeconds: 5,
+    maxDwellSeconds: 30,
+    createdBy: 'SYSTEM',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const tStart = 1700000000000;
+  const t0Str = new Date(tStart).toISOString();
+
+  // Track A enters at t0
+  const trackA_f1: Track = {
+    trackId: 'trk-alpha',
+    numericId: 101,
+    cameraId: 'CAM-01',
+    state: 'ACTIVE',
+    objectType: 'person',
+    direction: 'EAST',
+    createdAt: t0Str,
+    firstSeenAt: t0Str,
+    lastSeenAt: t0Str,
+    ageFrames: 1,
+    detectionCount: 1,
+    missedFrames: 0,
+    currentConfidence: 0.96,
+    dwellTimeSeconds: 0,
+    contributingDetectionIds: ['det-101'],
+    modelVersion: 'v1.0.0',
+    trajectory: [{ x: 0.25, y: 0.3, timestamp: t0Str }],
+    lastBoundingBox: { x: 0.2, y: 0.2, width: 0.1, height: 0.1 },
+  };
+
+  // Track B enters at t0
+  const trackB_f1: Track = {
+    trackId: 'trk-bravo',
+    numericId: 102,
+    cameraId: 'CAM-01',
+    state: 'ACTIVE',
+    objectType: 'person',
+    direction: 'EAST',
+    createdAt: t0Str,
+    firstSeenAt: t0Str,
+    lastSeenAt: t0Str,
+    ageFrames: 1,
+    detectionCount: 1,
+    missedFrames: 0,
+    currentConfidence: 0.94,
+    dwellTimeSeconds: 0,
+    contributingDetectionIds: ['det-102'],
+    modelVersion: 'v1.0.0',
+    trajectory: [{ x: 0.35, y: 0.4, timestamp: t0Str }],
+    lastBoundingBox: { x: 0.3, y: 0.3, width: 0.1, height: 0.1 },
+  };
+
+  // Frame 1: Both tracks enter
+  const evtsF1 = dwellEngine.evaluateCameraTracks(
+    'CAM-01',
+    'CAM-01',
+    [trackA_f1, trackB_f1],
+    [testZoneWithDwell],
+    t0Str
+  );
+  assert(evtsF1.length === 2, suite5, 'Concurrent multi-track entry generates entry events for each track');
+
+  // Verify Zone Occupancy at t0 has 2 occupants
+  const occF1 = dwellEngine.getZoneOccupancy(testZoneWithDwell, [trackA_f1, trackB_f1]);
+  assert(occF1.currentOccupants === 2, suite5, 'Zone occupancy reports exactly 2 occupants');
+  assert(
+    occF1.occupantTrackIds.includes('trk-alpha') && occF1.occupantTrackIds.includes('trk-bravo'),
+    suite5,
+    'Occupant Track IDs accurately reflect all active targets'
+  );
+
+  // Frame 2: 3 seconds elapsed (below 5s dwell warning threshold)
+  const t1Str = new Date(tStart + 3000).toISOString();
+  const trackA_f2 = { ...trackA_f1, lastSeenAt: t1Str };
+  const trackB_f2 = { ...trackB_f1, lastSeenAt: t1Str };
+  const evtsF2 = dwellEngine.evaluateCameraTracks(
+    'CAM-01',
+    'CAM-01',
+    [trackA_f2, trackB_f2],
+    [testZoneWithDwell],
+    t1Str
+  );
+  assert(evtsF2.length === 0, suite5, 'No dwell warnings emitted before threshold elapsed');
+
+  // Frame 3: 7 seconds elapsed (surpassed 5s dwell warning threshold)
+  const t2Str = new Date(tStart + 7000).toISOString();
+  const trackA_f3 = { ...trackA_f2, lastSeenAt: t2Str };
+  const trackB_f3 = { ...trackB_f2, lastSeenAt: t2Str };
+  const evtsF3 = dwellEngine.evaluateCameraTracks(
+    'CAM-01',
+    'CAM-01',
+    [trackA_f3, trackB_f3],
+    [testZoneWithDwell],
+    t2Str
+  );
+  const dwellWarnings = evtsF3.filter((e) => e.eventType === 'zone.dwell_warning');
+  assert(dwellWarnings.length === 2, suite5, 'Dwell warnings emitted for all tracks surpassing threshold');
+  assert(dwellWarnings[0].severity === 'CRITICAL', suite5, 'Restricted zone dwell warning inherits CRITICAL severity');
+
+  // Frame 4: 10 seconds elapsed (tracks continue to dwell - NO duplicate dwell warnings)
+  const t3Str = new Date(tStart + 10000).toISOString();
+  const trackA_f4 = { ...trackA_f3, lastSeenAt: t3Str };
+  const trackB_f4 = { ...trackB_f3, lastSeenAt: t3Str };
+  const evtsF4 = dwellEngine.evaluateCameraTracks(
+    'CAM-01',
+    'CAM-01',
+    [trackA_f4, trackB_f4],
+    [testZoneWithDwell],
+    t3Str
+  );
+  assert(evtsF4.length === 0, suite5, 'Dwell warning emitted strictly once (no duplicate floods on subsequent frames)');
+
+  // Frame 5: Track Alpha exits zone, Track Bravo remains
+  const t4Str = new Date(tStart + 12000).toISOString();
+  const trackA_f5: Track = {
+    ...trackA_f4,
+    lastSeenAt: t4Str,
+    trajectory: [
+      { x: 0.25, y: 0.3, timestamp: t0Str },
+      { x: 0.85, y: 0.9, timestamp: t4Str },
+    ],
+    lastBoundingBox: { x: 0.8, y: 0.8, width: 0.1, height: 0.1 },
+  };
+  const trackB_f5 = { ...trackB_f4, lastSeenAt: t4Str };
+
+  const evtsF5 = dwellEngine.evaluateCameraTracks(
+    'CAM-01',
+    'CAM-01',
+    [trackA_f5, trackB_f5],
+    [testZoneWithDwell],
+    t4Str
+  );
+  const exitA = evtsF5.find((e) => e.eventType === 'zone.exited' && e.trackId === 'trk-alpha');
+  assert(Boolean(exitA), suite5, 'Exiting track emits zone.exited without disturbing continuing occupants');
+
+  // Occupancy now decreases to 1
+  const occF5 = dwellEngine.getZoneOccupancy(testZoneWithDwell, [trackA_f5, trackB_f5]);
+  assert(occF5.currentOccupants === 1, suite5, 'Zone occupancy immediately decrements to 1 after target exit');
+  assert(
+    occF5.occupantTrackIds.length === 1 && occF5.occupantTrackIds[0] === 'trk-bravo',
+    suite5,
+    'Remaining occupant is accurately tracked in isolation'
+  );
 
   const total = results.length;
   const passed = results.filter((r) => r.passed).length;

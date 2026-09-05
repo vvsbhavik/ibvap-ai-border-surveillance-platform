@@ -21,6 +21,7 @@ import {
   SpatialZone,
   SpatialEvent,
   SpatialPerformanceMetrics,
+  ZoneOccupancy,
 } from '../server/types';
 import {
   StreamTelemetry,
@@ -320,6 +321,16 @@ export const api = {
         `${BASE_URL}/zones/spatial${queryStr}`
       );
     },
+    getOccupancy: (params?: { cameraId?: string; zoneId?: string; sectorId?: string }) => {
+      const q = new URLSearchParams();
+      if (params?.cameraId) q.set('cameraId', params.cameraId);
+      if (params?.zoneId) q.set('zoneId', params.zoneId);
+      if (params?.sectorId) q.set('sectorId', params.sectorId);
+      const queryStr = q.toString() ? `?${q.toString()}` : '';
+      return fetchJson<{ success: boolean; total: number; occupancies: ZoneOccupancy[]; occupancy?: ZoneOccupancy }>(
+        `${BASE_URL}/zones/occupancy${queryStr}`
+      );
+    },
     get: (id: string) =>
       fetchJson<{ success: boolean; zone: SpatialZone | Zone; occupants?: Track[] }>(
         `${BASE_URL}/zones/${encodeURIComponent(id)}`
@@ -426,14 +437,71 @@ export const api = {
   },
 
   anpr: {
-    list: (params?: { search?: string; watchlistOnly?: boolean }) => {
+    list: (params?: {
+      search?: string;
+      plate?: string;
+      normalizedPlate?: string;
+      vehicleTrackId?: string;
+      cameraId?: string;
+      vehicleClass?: string;
+      recognitionStatus?: string;
+      watchlistOnly?: boolean;
+      minConfidence?: number;
+      limit?: number;
+      offset?: number;
+    }) => {
       const q = new URLSearchParams();
       if (params?.search) q.set('search', params.search);
+      if (params?.plate) q.set('plate', params.plate);
+      if (params?.normalizedPlate) q.set('normalizedPlate', params.normalizedPlate);
+      if (params?.vehicleTrackId) q.set('vehicleTrackId', params.vehicleTrackId);
+      if (params?.cameraId) q.set('cameraId', params.cameraId);
+      if (params?.vehicleClass) q.set('vehicleClass', params.vehicleClass);
+      if (params?.recognitionStatus) q.set('recognitionStatus', params.recognitionStatus);
       if (params?.watchlistOnly) q.set('watchlistOnly', 'true');
-      return fetchJson<{ success: boolean; total: number; records: AnprRecord[] }>(
+      if (params?.minConfidence !== undefined) q.set('minConfidence', String(params.minConfidence));
+      if (params?.limit) q.set('limit', String(params.limit));
+      if (params?.offset) q.set('offset', String(params.offset));
+      return fetchJson<{ success: boolean; total: number; offset?: number; limit?: number; records: AnprRecord[] }>(
         `${BASE_URL}/anpr?${q.toString()}`
       );
     },
+    getVehicle: (trackId: string) =>
+      fetchJson<{ success: boolean; record: AnprRecord; observations: any[] }>(
+        `${BASE_URL}/anpr/vehicles/${encodeURIComponent(trackId)}`
+      ),
+    getCamera: (cameraId: string) =>
+      fetchJson<{ success: boolean; total: number; records: AnprRecord[] }>(
+        `${BASE_URL}/anpr/cameras/${encodeURIComponent(cameraId)}`
+      ),
+    events: (limit = 100) =>
+      fetchJson<{ success: boolean; total: number; events: any[] }>(`${BASE_URL}/anpr/events?limit=${limit}`),
+    metrics: () =>
+      fetchJson<{ success: boolean; metrics: any }>(`${BASE_URL}/anpr/metrics`),
+    search: (plate: string) =>
+      fetchJson<{ success: boolean; searchTerm: string; normalizedTerm: string; total: number; records: AnprRecord[] }>(
+        `${BASE_URL}/anpr/search?plate=${encodeURIComponent(plate)}`
+      ),
+    runScenario: (scenarioName: string) =>
+      fetchJson<{
+        success: boolean;
+        scenario: string;
+        description: string;
+        isSimulation: true;
+        assertionsPass: boolean;
+        notes: string[];
+        records: AnprRecord[];
+      }>(`${BASE_URL}/anpr/scenarios/${encodeURIComponent(scenarioName)}`, {
+        method: 'POST',
+      }),
+    export: (format = 'JSON') =>
+      fetchJson<{ success: boolean; exportedAt: string; exportedBy: string; count: number; records: AnprRecord[] }>(
+        `${BASE_URL}/anpr/export`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ format }),
+        }
+      ),
   },
 
   watchlists: {

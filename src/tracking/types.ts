@@ -3,7 +3,7 @@
  * Bounded tracking state, association metrics, directional kinematics, and normalized events.
  */
 
-import { BoundingBox, PixelBoundingBox } from '../ai-inference/types';
+import { BoundingBox, PixelBoundingBox, DetectedObjectType, VehicleClass } from '../ai-inference/types';
 
 export type TrackState = 'ACTIVE' | 'TEMPORARILY_LOST' | 'ENDED';
 
@@ -23,26 +23,36 @@ export interface TrajectoryPoint {
   timestamp: string;
   x: number;
   y: number;
-  centerX: number;
-  centerY: number;
-  boundingBox: BoundingBox;
+  centerX?: number;
+  centerY?: number;
+  boundingBox?: BoundingBox;
 }
 
 export interface Track {
-  /** Unique persistent track ID within this camera scope, e.g. "TRK-01" */
+  /** Unique persistent track ID within this camera scope, e.g. "TRK-01" or "VEH-01" */
   trackId: string;
   /** Monotonic numeric track sequence number */
   numericId: number;
   /** Originating camera identifier */
   cameraId: string;
-  /** Object class - strictly person */
-  objectType: 'person';
+  /** Object class - person or vehicle */
+  objectType: DetectedObjectType;
+  /** Vehicle class if objectType is vehicle (CAR, TRUCK, etc.) */
+  vehicleClass?: VehicleClass;
+  /** String class label for display / interoperability */
+  class?: string;
+  /** Associated person track IDs for vehicle tracks */
+  associatedPersonTrackIds?: string[];
+  /** Associated vehicle track ID for person tracks */
+  associatedVehicleTrackId?: string;
   /** Time of track inception */
   createdAt: string;
   /** Timestamp of the first detection associating with this track */
   firstSeenAt: string;
   /** Timestamp of the most recent detection associating with this track */
   lastSeenAt: string;
+  /** Age of track in processed frames */
+  ageFrames?: number;
   /** Most recently confirmed bounding box */
   lastBoundingBox: BoundingBox;
   /** Most recently confirmed pixel bounding box if available */
@@ -65,6 +75,19 @@ export interface Track {
   contributingDetectionIds: string[];
   /** Model version used during detection */
   modelVersion: string;
+  /** Explicit simulation indicator flag */
+  isSimulation?: boolean;
+  /** Associated ANPR metadata if vehicle */
+  anpr?: {
+    plateText?: string;
+    normalizedText?: string;
+    confidence?: number;
+    ocrConfidence?: number;
+    recognitionStatus?: string;
+    observationCount?: number;
+    lastObservedAt?: string;
+    isWatchlistMatch?: boolean;
+  };
 }
 
 export interface TrackingConfig {
@@ -107,7 +130,15 @@ export interface TrackingSubsystemHealth {
   lastProcessedAt: string | null;
 }
 
-export type TrackingEventType = 'track.created' | 'track.updated' | 'track.lost' | 'track.ended';
+export type TrackingEventType =
+  | 'track.created'
+  | 'track.updated'
+  | 'track.lost'
+  | 'track.ended'
+  | 'vehicle.track.started'
+  | 'vehicle.track.updated'
+  | 'vehicle.track.lost'
+  | 'vehicle.track.ended';
 
 export interface TrackingEvent {
   eventId: string;

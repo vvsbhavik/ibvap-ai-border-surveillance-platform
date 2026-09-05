@@ -26,6 +26,16 @@ export interface PixelBoundingBox {
 export type AiSubsystemHealth = InferenceHealth;
 export type AiInferenceConfig = InferenceConfig;
 
+export type DetectedObjectType = 'person' | 'vehicle';
+
+export type VehicleClass =
+  | 'CAR'
+  | 'MOTORCYCLE'
+  | 'BUS'
+  | 'TRUCK'
+  | 'VAN'
+  | 'UNKNOWN_VEHICLE';
+
 export interface NormalizedDetection {
   /** Unique ID for detection instance */
   detectionId: string;
@@ -35,8 +45,12 @@ export interface NormalizedDetection {
   timestamp: string;
   /** Timestamp when AI inference concluded */
   inferenceTimestamp: string;
-  /** Detected object class - strictly PERSON for Phase 06 */
-  objectType: 'person';
+  /** Detected object class: person or vehicle */
+  objectType: DetectedObjectType;
+  /** Specific vehicle classification if objectType is vehicle */
+  vehicleClass?: VehicleClass;
+  /** String class label for display / interoperability */
+  class?: string;
   /** Model-produced detection confidence (0.0 to 1.0) */
   confidence: number;
   /** Normalized bounding box relative to frame resolution */

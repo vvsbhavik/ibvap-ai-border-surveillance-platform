@@ -19,9 +19,22 @@ import {
 
 export type TrackingEventListener = (event: TrackingEvent) => void;
 
+export interface TrackingFrameEvent {
+  cameraId: string;
+  timestamp: string;
+  tracks: Track[];
+  endedTracks: Track[];
+  createdTracks: Track[];
+  updatedTracks: Track[];
+  lostTracks: Track[];
+}
+
+export type TrackingFrameListener = (frame: TrackingFrameEvent) => void;
+
 export class TrackingService {
   private trackers: Map<string, CameraTracker> = new Map();
   private listeners: Set<TrackingEventListener> = new Set();
+  private frameListeners: Set<TrackingFrameListener> = new Set();
   private config: TrackingConfig = { ...DEFAULT_TRACKING_CONFIG };
 
   private metrics: TrackingPerformanceMetrics = {
@@ -56,6 +69,14 @@ export class TrackingService {
   public onTrackingEvent(listener: TrackingEventListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * Subscribes a listener to full frame tracking cycles for continuous evaluation.
+   */
+  public onTrackingFrame(listener: TrackingFrameListener): () => void {
+    this.frameListeners.add(listener);
+    return () => this.frameListeners.delete(listener);
   }
 
   private dispatchEvent(event: TrackingEvent): void {
@@ -143,6 +164,24 @@ export class TrackingService {
       });
     }
 
+    // Dispatch Frame-Level Continuous Evaluation Event for active & ended tracks
+    const activeTracks = tracker.getActiveTracks();
+    for (const frameListener of this.frameListeners) {
+      try {
+        frameListener({
+          cameraId,
+          timestamp: frameTimestamp,
+          tracks: activeTracks,
+          endedTracks: result.endedTracks,
+          createdTracks: result.createdTracks,
+          updatedTracks: result.updatedTracks,
+          lostTracks: result.lostTracks,
+        });
+      } catch (err) {
+        console.error('[TrackingService] Error in tracking frame listener:', err);
+      }
+    }
+
     return result;
   }
 
@@ -160,6 +199,8 @@ export class TrackingService {
   public queryTracks(filter?: {
     cameraId?: string;
     state?: TrackState;
+    objectType?: string;
+    class?: string;
     limit?: number;
   }): Track[] {
     let list: Track[] = [];
@@ -177,6 +218,15 @@ export class TrackingService {
 
     if (filter?.state) {
       list = list.filter((t) => t.state === filter.state);
+    }
+
+    if (filter?.objectType) {
+      list = list.filter((t) => t.objectType === filter.objectType);
+    }
+
+    if (filter?.class) {
+      const targetClass = filter.class.toUpperCase();
+      list = list.filter((t) => (t.class || t.vehicleClass || t.objectType).toUpperCase() === targetClass);
     }
 
     // Sort by latest seen descending

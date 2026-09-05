@@ -9,6 +9,7 @@ import {
   SpatialEvent,
   TrackSpatialState,
   SpatialEngineMetrics,
+  ZoneOccupancy,
 } from './types';
 import { Track } from '../tracking/types';
 import {
@@ -116,6 +117,7 @@ export class SpatialEngine {
   ): SpatialEvent[] {
     const startTime = performance.now();
     const emittedEvents: SpatialEvent[] = [];
+    const nowMs = frameTimestamp ? new Date(frameTimestamp).getTime() : Date.now();
 
     // Filter zones strictly to this camera and active status
     const cameraZones = zones.filter(
@@ -141,7 +143,6 @@ export class SpatialEngine {
       if (track.state === 'ENDED') {
         const existingState = this.trackStates.get(track.trackId);
         if (existingState && existingState.activeZones.size > 0) {
-          const nowMs = Date.now();
           for (const [zoneId, entry] of existingState.activeZones.entries()) {
             const zone = cameraZones.find((z) => z.zoneId === zoneId);
             const dwellSeconds = Math.max(0, Math.round((nowMs - entry.enteredTimestampMs) / 1000));
@@ -192,7 +193,6 @@ export class SpatialEngine {
       // Ground plane footprint of the person
       const currentAnchor = getTrackAnchorPoint(track, 'GROUND_FOOTPRINT');
       const prevAnchor = state.lastAnchorPoint || currentAnchor;
-      const nowMs = Date.now();
 
       for (const zone of cameraZones) {
         if (zone.geometry === 'POLYGON') {
@@ -229,6 +229,7 @@ export class SpatialEngine {
               zoneType: zone.type,
               geometryType: 'POLYGON',
               objectType: track.objectType || 'person',
+              vehicleClass: track.vehicleClass,
               position: currentAnchor,
               direction: track.direction,
               severity,
@@ -236,6 +237,7 @@ export class SpatialEngine {
               metadata: {
                 confidence: track.currentConfidence,
                 dwellTimeSeconds: 0,
+                vehicleClass: track.vehicleClass,
               },
             };
 
@@ -264,6 +266,7 @@ export class SpatialEngine {
               zoneType: zone.type,
               geometryType: 'POLYGON',
               objectType: track.objectType || 'person',
+              vehicleClass: track.vehicleClass,
               position: currentAnchor,
               direction: track.direction,
               dwellTimeSeconds: dwellSeconds,
@@ -271,14 +274,54 @@ export class SpatialEngine {
               isViolation: false,
               metadata: {
                 dwellTimeSeconds: dwellSeconds,
+                vehicleClass: track.vehicleClass,
               },
             };
 
             this.dispatchEvent(exitEvent);
             emittedEvents.push(exitEvent);
             this.metrics.totalZoneExits++;
+          } else if (isInside && isCurrentlyActive) {
+            // INSIDE -> INSIDE: Dwell state continues, NO duplicate entry event emitted!
+            // Evaluate dwell warning threshold if configured
+            const entry = state.activeZones.get(zone.zoneId);
+            if (entry && zone.dwellWarningSeconds && zone.dwellWarningSeconds > 0) {
+              const currentDwellSeconds = (nowMs - entry.enteredTimestampMs) / 1000;
+              if (currentDwellSeconds >= zone.dwellWarningSeconds && !entry.dwellWarningEmitted) {
+                entry.dwellWarningEmitted = true;
+                const dwellWarnSeverity = zone.type === 'RESTRICTED_AREA' ? 'CRITICAL' : 'HIGH';
+
+                const dwellEvent: SpatialEvent = {
+                  eventId: `evt-sp-dw-${Date.now()}-${track.trackId}-${zone.zoneId}`,
+                  eventType: 'zone.dwell_warning',
+                  timestamp: frameTimestamp,
+                  cameraId,
+                  cameraIdentifier,
+                  trackId: track.trackId,
+                  zoneId: zone.zoneId,
+                  zoneName: zone.name,
+                  zoneType: zone.type,
+                  geometryType: 'POLYGON',
+                  objectType: track.objectType || 'person',
+                  vehicleClass: track.vehicleClass,
+                  position: currentAnchor,
+                  direction: track.direction,
+                  dwellTimeSeconds: Math.round(currentDwellSeconds),
+                  severity: dwellWarnSeverity,
+                  isViolation: zone.type === 'RESTRICTED_AREA',
+                  metadata: {
+                    dwellWarningSeconds: zone.dwellWarningSeconds,
+                    maxDwellSeconds: zone.maxDwellSeconds,
+                    dwellTimeSeconds: Math.round(currentDwellSeconds),
+                    vehicleClass: track.vehicleClass,
+                  },
+                };
+
+                this.dispatchEvent(dwellEvent);
+                emittedEvents.push(dwellEvent);
+              }
+            }
           }
-          // INSIDE -> INSIDE: Dwell state continues, NO duplicate entry event emitted!
         } else if (zone.geometry === 'LINE') {
           // Virtual Fence line-segment intersection
           // Requires motion between distinct coordinates
@@ -329,6 +372,7 @@ export class SpatialEngine {
                   zoneType: zone.type,
                   geometryType: 'LINE',
                   objectType: track.objectType || 'person',
+                  vehicleClass: track.vehicleClass,
                   position: currentAnchor,
                   direction: track.direction,
                   crossingDirection: crossing.direction,
@@ -337,6 +381,7 @@ export class SpatialEngine {
                   metadata: {
                     segmentIndex: crossing.segmentIndex,
                     configuredDirection: zone.direction || 'BIDIRECTIONAL',
+                    vehicleClass: track.vehicleClass,
                   },
                 };
 
@@ -355,7 +400,7 @@ export class SpatialEngine {
 
     // Clean up expired tracks not seen in over 60 seconds
     const cleanupThresholdMs = 60 * 1000;
-    const now = Date.now();
+    const now = nowMs;
     for (const [trackId, st] of this.trackStates.entries()) {
       const lastUpdateMs = Date.parse(st.lastUpdated);
       if (!isNaN(lastUpdateMs) && now - lastUpdateMs > cleanupThresholdMs) {
@@ -429,6 +474,80 @@ export class SpatialEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Get real-time zone occupancy calculation based on active tracks and spatial states.
+   */
+  public getZoneOccupancy(
+    zone: SpatialZone,
+    activeTracks?: Track[]
+  ): ZoneOccupancy {
+    const occupantTrackIds: string[] = [];
+    let oldestOccupantMs = Infinity;
+    let oldestOccupantAt: string | null = null;
+    const nowMs = Date.now();
+
+    // Check currently tracked states inside this zone
+    for (const [trackId, state] of this.trackStates.entries()) {
+      const entry = state.activeZones.get(zone.zoneId);
+      if (entry) {
+        // If activeTracks list is provided, ensure track is still present and not ENDED
+        if (activeTracks) {
+          const t = activeTracks.find((trk) => trk.trackId === trackId);
+          if (!t || t.state === 'ENDED') continue;
+        }
+        if (!occupantTrackIds.includes(trackId)) {
+          occupantTrackIds.push(trackId);
+        }
+        if (entry.enteredTimestampMs < oldestOccupantMs) {
+          oldestOccupantMs = entry.enteredTimestampMs;
+          oldestOccupantAt = entry.enteredAt;
+        }
+      }
+    }
+
+    // Also, if activeTracks was passed, check any tracks currently physically inside
+    // to guarantee live synchronization
+    if (activeTracks && zone.geometry === 'POLYGON') {
+      for (const track of activeTracks) {
+        if (track.state === 'ENDED' || occupantTrackIds.includes(track.trackId)) continue;
+        const anchor = getTrackAnchorPoint(track, 'GROUND_FOOTPRINT');
+        if (isPointInPolygon(anchor, zone.coordinates)) {
+          occupantTrackIds.push(track.trackId);
+          if (!oldestOccupantAt) {
+            oldestOccupantAt = track.firstSeenAt || new Date(nowMs).toISOString();
+          }
+        }
+      }
+    }
+
+    const personTrackIds = occupantTrackIds.filter((id) => {
+      const trk = activeTracks?.find((t) => t.trackId === id);
+      if (trk) return trk.objectType !== 'vehicle';
+      return !id.startsWith('VEH-');
+    });
+
+    const vehicleTrackIds = occupantTrackIds.filter((id) => {
+      const trk = activeTracks?.find((t) => t.trackId === id);
+      if (trk) return trk.objectType === 'vehicle';
+      return id.startsWith('VEH-');
+    });
+
+    return {
+      zoneId: zone.zoneId,
+      cameraId: zone.cameraId,
+      zoneName: zone.name,
+      currentOccupants: occupantTrackIds.length,
+      occupantTrackIds,
+      personOccupants: personTrackIds.length,
+      vehicleOccupants: vehicleTrackIds.length,
+      totalOccupants: occupantTrackIds.length,
+      personTrackIds,
+      vehicleTrackIds,
+      oldestOccupantAt,
+      updatedAt: new Date(nowMs).toISOString(),
+    };
   }
 
   /**

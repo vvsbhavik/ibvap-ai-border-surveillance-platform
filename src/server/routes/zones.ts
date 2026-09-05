@@ -4,6 +4,7 @@ import { spatialEngine } from '../../spatial/spatial-engine';
 import { validateGeometry } from '../../spatial/geometry';
 import { hasPermission } from '../../utils/permissions';
 import { SpatialZone } from '../../spatial/types';
+import { trackingService } from '../../tracking/tracking-service';
 
 export const zonesRouter = Router();
 
@@ -99,6 +100,56 @@ zonesRouter.get('/', (req: Request, res: Response) => {
   });
 });
 
+// GET /api/v1/zones/occupancy
+zonesRouter.get('/occupancy', (req: Request, res: Response) => {
+  const operator = getOperatorContext(req);
+
+  if (!hasPermission(operator.role, 'zone.view')) {
+    res.status(403).json({
+      success: false,
+      error: 'Forbidden: Insufficient permissions to view zone occupancy (requires zone.view).',
+    });
+    return;
+  }
+
+  const { cameraId, zoneId, sectorId } = req.query;
+
+  let matchingZones = dataStore.getSpatialZones({
+    cameraId: typeof cameraId === 'string' ? cameraId : undefined,
+    active: true,
+  });
+
+  if (zoneId && typeof zoneId === 'string') {
+    matchingZones = matchingZones.filter((z) => z.zoneId === zoneId);
+  }
+
+  if (sectorId && typeof sectorId === 'string') {
+    matchingZones = matchingZones.filter((z) => z.sectorId === sectorId);
+  }
+
+  const occupancies = matchingZones.map((z) => {
+    const activeTracks = trackingService.getActiveTracks(z.cameraId);
+    return spatialEngine.getZoneOccupancy(z, activeTracks);
+  });
+
+  // If a single zone was specifically queried and found, also provide the primary object
+  if (zoneId && typeof zoneId === 'string' && occupancies.length === 1) {
+    res.json({
+      success: true,
+      occupancy: occupancies[0],
+      occupancies,
+      total: 1,
+    });
+    return;
+  }
+
+  res.json({
+    success: true,
+    total: occupancies.length,
+    occupancies,
+  });
+});
+
 // GET /api/v1/zones/:id
 zonesRouter.get('/:id', (req: Request, res: Response) => {
   const { id } = req.params;
@@ -168,6 +219,45 @@ zonesRouter.post('/', (req: Request, res: Response) => {
     return;
   }
 
+  // Validate optional dwell thresholds
+  if (zoneData.dwellWarningSeconds !== undefined) {
+    if (
+      typeof zoneData.dwellWarningSeconds !== 'number' ||
+      isNaN(zoneData.dwellWarningSeconds) ||
+      zoneData.dwellWarningSeconds <= 0
+    ) {
+      res.status(400).json({
+        success: false,
+        error: 'dwellWarningSeconds must be a positive number.',
+      });
+      return;
+    }
+  }
+  if (zoneData.maxDwellSeconds !== undefined) {
+    if (
+      typeof zoneData.maxDwellSeconds !== 'number' ||
+      isNaN(zoneData.maxDwellSeconds) ||
+      zoneData.maxDwellSeconds <= 0
+    ) {
+      res.status(400).json({
+        success: false,
+        error: 'maxDwellSeconds must be a positive number.',
+      });
+      return;
+    }
+  }
+  if (
+    zoneData.dwellWarningSeconds !== undefined &&
+    zoneData.maxDwellSeconds !== undefined &&
+    zoneData.dwellWarningSeconds > zoneData.maxDwellSeconds
+  ) {
+    res.status(400).json({
+      success: false,
+      error: 'dwellWarningSeconds must be less than or equal to maxDwellSeconds.',
+    });
+    return;
+  }
+
   try {
     const created = dataStore.createSpatialZone(zoneData, operator.callsign, req.ip);
 
@@ -220,6 +310,48 @@ zonesRouter.patch('/:id', (req: Request, res: Response) => {
       });
       return;
     }
+  }
+
+  // Validate optional dwell thresholds
+  const effectiveWarn = updates.dwellWarningSeconds !== undefined ? updates.dwellWarningSeconds : existing.dwellWarningSeconds;
+  const effectiveMax = updates.maxDwellSeconds !== undefined ? updates.maxDwellSeconds : existing.maxDwellSeconds;
+
+  if (updates.dwellWarningSeconds !== undefined) {
+    if (
+      typeof updates.dwellWarningSeconds !== 'number' ||
+      isNaN(updates.dwellWarningSeconds) ||
+      updates.dwellWarningSeconds <= 0
+    ) {
+      res.status(400).json({
+        success: false,
+        error: 'dwellWarningSeconds must be a positive number.',
+      });
+      return;
+    }
+  }
+  if (updates.maxDwellSeconds !== undefined) {
+    if (
+      typeof updates.maxDwellSeconds !== 'number' ||
+      isNaN(updates.maxDwellSeconds) ||
+      updates.maxDwellSeconds <= 0
+    ) {
+      res.status(400).json({
+        success: false,
+        error: 'maxDwellSeconds must be a positive number.',
+      });
+      return;
+    }
+  }
+  if (
+    effectiveWarn !== undefined &&
+    effectiveMax !== undefined &&
+    effectiveWarn > effectiveMax
+  ) {
+    res.status(400).json({
+      success: false,
+      error: 'dwellWarningSeconds must be less than or equal to maxDwellSeconds.',
+    });
+    return;
   }
 
   try {

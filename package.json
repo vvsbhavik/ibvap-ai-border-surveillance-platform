@@ -8,7 +8,8 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx src/tracking/verify-tracker.ts && tsx src/spatial/verify-spatial.ts && tsx src/anpr/verify-anpr.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
