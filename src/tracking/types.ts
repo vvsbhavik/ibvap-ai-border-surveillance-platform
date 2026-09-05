@@ -88,6 +88,20 @@ export interface Track {
     lastObservedAt?: string;
     isWatchlistMatch?: boolean;
   };
+  /** Associated Face Analytics metadata if person */
+  face?: {
+    faceDetectionId?: string;
+    quality?: 'GOOD' | 'ACCEPTABLE' | 'POOR' | 'UNREADABLE';
+    qualityScore?: number;
+    recognitionStatus?: 'UNKNOWN' | 'POSSIBLE_MATCH' | 'MATCHED' | 'LOW_QUALITY' | 'UNREADABLE';
+    similarityScore?: number;
+    isWatchlistMatch?: boolean;
+    watchlistEntryId?: string;
+    watchlistDisplayName?: string;
+    observationCount?: number;
+    lastObservedAt?: string;
+    boundingBox?: BoundingBox;
+  };
 }
 
 export interface TrackingConfig {

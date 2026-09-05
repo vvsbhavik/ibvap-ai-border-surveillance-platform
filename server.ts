@@ -20,10 +20,12 @@ import { detectionsRouter } from './src/server/routes/detections';
 import { aiRouter } from './src/server/routes/ai';
 import { tracksRouter } from './src/server/routes/tracks';
 import { trackingRouter } from './src/server/routes/tracking';
+import { facesRouter } from './src/server/routes/faces';
 import { videoGateway } from './src/video-gateway/video-gateway';
 import { aiInferenceService } from './src/ai-inference/inference-service';
 import { trackingService } from './src/tracking/tracking-service';
 import { spatialEngine } from './src/spatial/spatial-engine';
+import { faceService } from './src/face/face-service';
 import { dataStore } from './src/server/store';
 
 async function startServer() {
@@ -80,6 +82,7 @@ async function startServer() {
   apiRouter.use('/ai', aiRouter);
   apiRouter.use('/tracks', tracksRouter);
   apiRouter.use('/tracking', trackingRouter);
+  apiRouter.use('/faces', facesRouter);
 
   // Hook Video Gateway real-time telemetry events to IBVAP DataStore and SSE event bus
   videoGateway.addEventListener((event) => {
@@ -389,6 +392,67 @@ async function startServer() {
       source: spEvt.cameraIdentifier,
       payload: spEvt,
     });
+  });
+
+  // Hook Face Analytics events to DataStore realtime event bus & create alerts on biometric hits
+  faceService.onFaceEvent((faceEvt) => {
+    dataStore.broadcastEvent({
+      eventId: faceEvt.eventId,
+      eventType: faceEvt.eventType,
+      timestamp: faceEvt.timestamp,
+      source: faceEvt.cameraIdentifier || faceEvt.cameraId,
+      payload: faceEvt,
+    });
+
+    // Create high-priority alert on confirmed biometric watchlist match
+    if (faceEvt.eventType === 'face.match.confirmed') {
+      const alertId = `alt-face-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const cam = dataStore.cameras.find((c) => c.id === faceEvt.cameraId || c.cameraId === faceEvt.cameraId);
+
+      const faceAlert = {
+        id: alertId,
+        alertId,
+        cameraId: faceEvt.cameraId,
+        cameraIdentifier: faceEvt.cameraIdentifier || faceEvt.cameraId,
+        zoneId: faceEvt.zoneId,
+        zoneName: faceEvt.spatialContext?.zoneName || 'Surveillance Sector',
+        sectorId: cam?.sectorId || 'sec-bravo',
+        sectorName: cam?.sectorName || 'Sector Bravo',
+        ruleType: 'FACE_WATCHLIST_MATCH',
+        severity: 'CRITICAL' as const,
+        status: 'NEW' as const,
+        title: `Watchlist Match: ${faceEvt.watchlistDisplayName || 'Subject of Interest'}`,
+        description: `Positive biometric match for ${faceEvt.watchlistDisplayName} on Track ${faceEvt.personTrackId} (Similarity: ${(
+          (faceEvt.similarity || 0) * 100
+        ).toFixed(1)}%)`,
+        timestamp: faceEvt.timestamp,
+        firstDetectedAt: faceEvt.timestamp,
+        lastDetectedAt: faceEvt.timestamp,
+        threatScore: 98,
+        confidence: faceEvt.similarity || 0.90,
+        acknowledged: false,
+        source: 'FACE_ANALYTICS',
+        isSimulation: faceEvt.isSimulation ?? true,
+        eventId: faceEvt.eventId,
+        trackId: faceEvt.personTrackId,
+        position: faceEvt.spatialContext ? { x: 0.5, y: 0.5 } : undefined,
+        evidenceReference: faceEvt.evidenceReference?.evidenceId || 'unavailable',
+        metadata: {
+          watchlistEntryId: faceEvt.watchlistEntryId,
+          similarityScore: faceEvt.similarity,
+          quality: faceEvt.quality,
+        },
+      };
+
+      dataStore.alerts.unshift(faceAlert as any);
+      dataStore.broadcastEvent({
+        eventId: `evt-alert-${alertId}`,
+        eventType: 'alert.created',
+        timestamp: faceEvt.timestamp,
+        source: faceEvt.cameraIdentifier || faceEvt.cameraId,
+        payload: faceAlert,
+      });
+    }
   });
 
   app.use('/api/v1', apiRouter);
