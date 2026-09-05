@@ -1,0 +1,137 @@
+services:
+  # 1. Primary IBVAP Application (Frontend + Command API)
+  ibvap-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ibvap-command-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_URL=postgres://ibvap_admin:ibvap_secure_pass@postgres:5432/ibvap_core
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - JWT_SECRET=ibvap-mission-critical-token-secret-2026
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ibvap-network
+
+  # 2. Production PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: ibvap-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=ibvap_core
+      - POSTGRES_USER=ibvap_admin
+      - POSTGRES_PASSWORD=ibvap_secure_pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ibvap_admin -d ibvap_core"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ibvap-network
+
+  # 3. Redis In-Memory State & Event Broker
+  redis:
+    image: redis:7-alpine
+    container_name: ibvap-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ibvap-network
+
+  # --------------------------------------------------------------------------
+  # PHASE 02+ EXTENSION POINTS (Documented & Prepared)
+  # --------------------------------------------------------------------------
+
+  # Phase 05: Video Gateway (MediaMTX / RTSP Restreamer & Stream Ingestion)
+  video-gateway:
+    image: bluenviron/mediamtx:latest
+    container_name: ibvap-video-gateway
+    restart: unless-stopped
+    ports:
+      - "8554:8554" # RTSP
+      - "8888:8888" # HLS
+      - "8889:8889" # WebRTC
+      - "9997:9997" # Control API & Metrics
+    environment:
+      - MTX_PROTOCOLS=tcp,udp
+      - MTX_RTSP_PORT=8554
+      - MTX_HLS_PORT=8888
+      - MTX_WEBRTC_PORT=8889
+      - MTX_API=yes
+      - MTX_API_ADDRESS=:9997
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:9997/v3/config/global/get > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ibvap-network
+
+  # Extension Point: AI Inference Node (YOLOv8 / TensorRT Pipeline)
+  # ai-inference-node:
+  #   image: ibvap/ai-inference:v1
+  #   container_name: ibvap-ai-node-alpha
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   networks:
+  #     - ibvap-network
+
+  # Extension Point: n8n Workflow Automation
+  # n8n:
+  #   image: n8nio/n8n:latest
+  #   container_name: ibvap-n8n
+  #   ports:
+  #     - "5678:5678"
+  #   networks:
+  #     - ibvap-network
+
+  # Extension Point: MinIO Object Storage (Evidence Vault & Video Chunks)
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: ibvap-evidence-vault
+  #   command: server /data --console-address ":9001"
+  #   ports:
+  #     - "9000:9000"
+  #     - "9001:9001"
+  #   volumes:
+  #     - miniodata:/data
+  #   networks:
+  #     - ibvap-network
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+
+networks:
+  ibvap-network:
+    driver: bridge
