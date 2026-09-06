@@ -1,8 +1,255 @@
 import { Request, Response, Router } from 'express';
 import { aiInferenceService } from '../../ai-inference/inference-service';
 import { videoGateway } from '../../video-gateway/video-gateway';
+import { geminiService } from '../services/gemini-service';
+import { GeminiLiveAdapter } from '../services/gemini-live-adapter';
+import { dataStore } from '../store';
+import { OperatorAuthContext } from '../services/gemini-types';
 
 export const aiRouter = Router();
+
+/**
+ * Extracts and canonicalizes operator security context.
+ */
+function getOperatorContext(req: Request): OperatorAuthContext {
+  const headerCallsign = (req.headers['x-operator-callsign'] as string) || (req.body?.operatorCallsign as string);
+  const headerRole = (req.headers['x-operator-role'] as string) || (req.body?.operatorRole as string);
+
+  if (headerCallsign) {
+    const user = dataStore.users.find((u) => u.callsign.toUpperCase() === headerCallsign.toUpperCase());
+    if (user) {
+      return { callsign: user.callsign, role: user.role, ipAddress: req.ip || '127.0.0.1' };
+    }
+    return { callsign: headerCallsign, role: headerRole || 'WATCH_COMMANDER', ipAddress: req.ip || '127.0.0.1' };
+  }
+
+  return { callsign: 'COMMANDER-1', role: 'WATCH_COMMANDER', ipAddress: req.ip || '127.0.0.1' };
+}
+
+/**
+ * Ensures operator has required permission for Copilot operations.
+ */
+function checkCopilotPermission(req: Request, res: Response, permission = 'copilot.use'): boolean {
+  const operator = getOperatorContext(req);
+  const hasPerm = dataStore.hasPermission(operator.role, permission as any);
+  if (!hasPerm) {
+    res.status(403).json({
+      success: false,
+      error: 'FORBIDDEN',
+      message: `Operator ${operator.callsign} (${operator.role}) lacks required permission: ${permission}`,
+    });
+    return false;
+  }
+  return true;
+}
+
+/**
+ * GET /api/v1/ai/status
+ * Returns truthful telemetry of Gemini LLM integration and Gemini Live adapter status.
+ */
+aiRouter.get('/status', (req: Request, res: Response) => {
+  const telemetry = geminiService.getTelemetry();
+  const liveStatus = GeminiLiveAdapter.getStatus();
+  res.json({
+    success: true,
+    telemetry,
+    live: liveStatus,
+  });
+});
+
+/**
+ * POST /api/v1/ai/copilot/query
+ * Executes a conversational Copilot query under the operator's security context.
+ */
+aiRouter.post('/copilot/query', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'copilot.use')) return;
+
+  const { query, cameraId, incidentId, alertId, trackId } = req.body;
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'A non-empty query string is required.',
+    });
+  }
+
+  const operator = getOperatorContext(req);
+
+  try {
+    const result = await geminiService.queryCopilot(
+      query.trim(),
+      { cameraId, incidentId, alertId, trackId },
+      operator
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'COPILOT_EXECUTION_ERROR',
+      message: err?.message || 'Failed to process Copilot query',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/ai/incidents/:incidentId/summarize
+ * Generates an authoritative incident summary.
+ */
+aiRouter.post('/incidents/:incidentId/summarize', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'incident.view')) return;
+
+  const { incidentId } = req.params;
+  const operator = getOperatorContext(req);
+
+  try {
+    const summary = await geminiService.summarizeIncident(incidentId, operator);
+    res.json({
+      success: true,
+      data: summary,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'SUMMARY_EXECUTION_ERROR',
+      message: err?.message || 'Failed to summarize incident',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/ai/alerts/:alertId/explain
+ * Explains an alert and its causal trigger chain.
+ */
+aiRouter.post('/alerts/:alertId/explain', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'alert.view')) return;
+
+  const { alertId } = req.params;
+  const operator = getOperatorContext(req);
+
+  try {
+    const explanation = await geminiService.explainAlert(alertId, operator);
+    res.json({
+      success: true,
+      data: explanation,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'EXPLANATION_EXECUTION_ERROR',
+      message: err?.message || 'Failed to explain alert',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/ai/investigate
+ * Investigates an entity (Track ID, Plate, Person, or Camera).
+ */
+aiRouter.post('/investigate', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'copilot.use')) return;
+
+  const { entityType, entityId, query } = req.body;
+  if (!entityType || !entityId) {
+    return res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'entityType and entityId are required.',
+    });
+  }
+
+  const operator = getOperatorContext(req);
+
+  try {
+    const result = await geminiService.investigateEntity(
+      entityType,
+      entityId,
+      query || `Investigate ${entityType} ${entityId}`,
+      operator
+    );
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'INVESTIGATION_ERROR',
+      message: err?.message || 'Failed to execute entity investigation',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/ai/timeline
+ * Generates verified chronological timeline narration.
+ */
+aiRouter.post('/timeline', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'copilot.use')) return;
+
+  const operator = getOperatorContext(req);
+
+  try {
+    const result = await geminiService.generateTimeline(req.body || {}, operator);
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'TIMELINE_ERROR',
+      message: err?.message || 'Failed to generate timeline',
+    });
+  }
+});
+
+/**
+ * POST /api/v1/ai/camera/:cameraId/copilot
+ * Selected-camera conversational copilot mode.
+ */
+aiRouter.post('/camera/:cameraId/copilot', async (req: Request, res: Response) => {
+  if (!checkCopilotPermission(req, res, 'camera.view')) return;
+
+  const { cameraId } = req.params;
+  const { query } = req.body;
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'Query string is required.',
+    });
+  }
+
+  const operator = getOperatorContext(req);
+
+  try {
+    const result = await geminiService.querySelectedCamera(cameraId, query.trim(), operator);
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: 'CAMERA_COPILOT_ERROR',
+      message: err?.message || 'Failed to execute camera copilot query',
+    });
+  }
+});
+
+/**
+ * GET /api/v1/ai/live/status
+ * Returns authoritative Gemini Live status report (NOT_IMPLEMENTED).
+ */
+aiRouter.get('/live/status', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: GeminiLiveAdapter.getStatus(),
+  });
+});
 
 /**
  * GET /api/v1/ai/health

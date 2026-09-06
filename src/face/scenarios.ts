@@ -39,6 +39,7 @@ export function createSyntheticPersonTrack(params: {
     cameraId: params.cameraId,
     objectType: 'person',
     class: 'person',
+    createdAt: now,
     firstSeenAt: now,
     lastSeenAt: now,
     lastBoundingBox: { x, y, width, height },
@@ -52,9 +53,11 @@ export function createSyntheticPersonTrack(params: {
     },
     trajectory: [
       {
-        centroid: { x: x + width / 2, y: y + height / 2 },
+        x: x + width / 2,
+        y: y + height / 2,
+        centerX: x + width / 2,
+        centerY: y + height / 2,
         timestamp: now,
-        speed: 1.2,
       },
     ],
     detectionCount: 1,

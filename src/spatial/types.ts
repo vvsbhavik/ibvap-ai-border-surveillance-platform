@@ -47,6 +47,8 @@ export interface SpatialZone {
   direction?: FenceDirection;
   schedule?: ZoneSchedule;
   color?: string; // Hex color for custom rendering
+  isRestricted?: boolean;
+  dwellThresholdSeconds?: number;
   sectorId?: string;
   sectorName?: string;
   severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';

@@ -49,7 +49,19 @@ function getOperatorContext(req: Request): { callsign: string; role: string } {
  */
 function checkPermission(req: Request, res: Response, permission: string): boolean {
   const operator = getOperatorContext(req);
-  const hasPerm = dataStore.hasPermission(operator.role, permission as any);
+  // Canonicalize or fallback check against system permissions
+  let permToCheck = permission as any;
+  if (permission === 'ai.view') {
+    permToCheck = 'monitoring.view';
+  } else if (permission === 'ai.manage') {
+    permToCheck = 'monitoring.view';
+  } else if (permission === 'events.view') {
+    permToCheck = 'monitoring.view';
+  } else if (permission === 'watchlists.view') {
+    permToCheck = 'watchlist.view';
+  }
+
+  const hasPerm = dataStore.hasPermission(operator.role, permToCheck);
   if (!hasPerm) {
     res.status(403).json({
       success: false,
@@ -134,6 +146,208 @@ facesRouter.get('/watchlists', (req: Request, res: Response) => {
     success: true,
     total: watchlists.length,
     watchlists,
+  });
+});
+
+// POST /api/v1/faces/watchlists
+// Create face watchlist entry
+facesRouter.post('/watchlists', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'watchlist.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { displayName, category, priority, notes, templateEmbedding } = req.body;
+
+  if (!displayName || !category) {
+    res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'displayName and category are required.',
+    });
+    return;
+  }
+
+  const newEntry = faceService.addWatchlistEntry({
+    id: `fwl-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+    displayName,
+    category,
+    priority: priority || 'HIGH',
+    notes: notes || '',
+    status: 'ACTIVE',
+    templateEmbedding: templateEmbedding || Array.from({ length: 128 }, (_, i) => Math.cos(i * 0.1) * 0.1),
+  });
+
+  dataStore.logAudit(
+    operator.callsign,
+    'CREATE_FACE_WATCHLIST',
+    'FACE_ANALYTICS',
+    newEntry.id,
+    req.ip || '127.0.0.1',
+    { displayName: newEntry.displayName, category: newEntry.category },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry: newEntry,
+  });
+});
+
+// PUT /api/v1/faces/watchlists/:id
+// Update face watchlist entry
+facesRouter.put('/watchlists/:id', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'watchlist.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const { displayName, category, priority, notes } = req.body;
+
+  const updated = faceService.updateWatchlistEntry(id, {
+    displayName,
+    category,
+    priority,
+    notes,
+  });
+
+  if (!updated) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `Face watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'UPDATE_FACE_WATCHLIST',
+    'FACE_ANALYTICS',
+    id,
+    req.ip || '127.0.0.1',
+    { displayName, category },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry: updated,
+  });
+});
+
+// PATCH /api/v1/faces/watchlists/:id/toggle
+// Toggle face watchlist entry active status
+facesRouter.patch('/watchlists/:id/toggle', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'watchlist.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const toggled = faceService.toggleWatchlistEntry(id);
+
+  if (!toggled) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `Face watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'TOGGLE_FACE_WATCHLIST',
+    'FACE_ANALYTICS',
+    id,
+    req.ip || '127.0.0.1',
+    { status: toggled.status },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry: toggled,
+  });
+});
+
+// DELETE /api/v1/faces/watchlists/:id
+// Delete face watchlist entry
+facesRouter.delete('/watchlists/:id', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'watchlist.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const deleted = faceService.deleteWatchlistEntry(id);
+
+  if (!deleted) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `Face watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'DELETE_FACE_WATCHLIST',
+    'FACE_ANALYTICS',
+    id,
+    req.ip || '127.0.0.1',
+    {},
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    removedId: id,
+  });
+});
+
+// GET /api/v1/faces/search
+// Metadata and query search with mandatory audit logging
+facesRouter.get('/search', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'ai.view')) return;
+
+  const operator = getOperatorContext(req);
+  const { q, personTrackId, cameraId, quality, recognitionStatus, isWatchlistMatch } = req.query;
+
+  const searchResults = faceService.searchRecords({
+    q: q as string,
+    personTrackId: personTrackId as string,
+    cameraId: cameraId as string,
+    quality: quality as FaceQualityState,
+    recognitionStatus: recognitionStatus as FaceRecognitionStatus,
+    isWatchlistMatch: isWatchlistMatch !== undefined ? isWatchlistMatch === 'true' : undefined,
+  });
+
+  dataStore.logAudit(
+    operator.callsign,
+    'FACE_SEARCH',
+    'FACE_ANALYTICS',
+    (q as string) || (personTrackId as string) || 'ALL',
+    req.ip || '127.0.0.1',
+    {
+      query: q,
+      personTrackId,
+      resultsCount: searchResults.total,
+    },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    total: searchResults.total,
+    records: searchResults.records,
+  });
+});
+
+// GET /api/v1/faces/retention
+// Retention policy telemetry
+facesRouter.get('/retention', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'ai.view')) return;
+
+  const policy = faceService.getRetentionPolicy();
+  res.json({
+    success: true,
+    retention: policy,
   });
 });
 

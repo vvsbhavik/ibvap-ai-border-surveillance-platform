@@ -137,8 +137,9 @@ export interface PersistentVehicleAnprRecord {
     zoneName?: string;
     recentZoneId?: string;
     isInsideRestrictedZone?: boolean;
+    isRestricted?: boolean;
     lastFenceCrossed?: string;
-    direction?: MovementDirection;
+    direction?: MovementDirection | string;
     dwellTimeSeconds?: number;
     sectorId?: string;
     sectorName?: string;
@@ -169,7 +170,8 @@ export type AnprEventType =
   | 'anpr.recognition.updated'
   | 'anpr.recognition.confirmed'
   | 'anpr.recognition.uncertain'
-  | 'anpr.vehicle.associated';
+  | 'anpr.vehicle.associated'
+  | 'anpr.watchlist.match';
 
 /**
  * Structured ANPR Event envelope
@@ -196,6 +198,9 @@ export interface AnprEvent {
   spatialContext?: PersistentVehicleAnprRecord['spatialContext'];
   evidenceReference?: PersistentVehicleAnprRecord['evidenceReference'];
   isSimulation?: boolean;
+  watchlistCategory?: string;
+  watchlistEntryId?: string;
+  isWatchlistMatch?: boolean;
 }
 
 /**

@@ -569,6 +569,75 @@ export class SpatialEngine {
   }
 
   /**
+   * Retrieves active spatial intelligence context for a given track,
+   * including active zones, restriction status, fence crossing, and dwell duration.
+   */
+  public getTrackSpatialContext(
+    trackId: string,
+    cameraZones?: SpatialZone[]
+  ): {
+    zoneId?: string;
+    zoneName?: string;
+    isRestricted?: boolean;
+    isInsideRestrictedZone?: boolean;
+    lastFenceCrossed?: string;
+    dwellTimeSeconds?: number;
+    sectorId?: string;
+    sectorName?: string;
+    direction?: string;
+  } | undefined {
+    const state = this.trackStates.get(trackId);
+    if (!state) return undefined;
+
+    let targetZoneId: string | undefined;
+    let targetZone: SpatialZone | undefined;
+    let dwellTimeSeconds: number | undefined;
+
+    if (state.activeZones.size > 0) {
+      const now = Date.now();
+      // Look for a restricted zone first, or the first active zone
+      for (const [zId, entry] of state.activeZones.entries()) {
+        const found = cameraZones?.find((z) => z.zoneId === zId);
+        const dwell = Math.max(0, Math.round((now - entry.enteredTimestampMs) / 1000));
+        if (found?.isRestricted || found?.type === 'RESTRICTED_AREA') {
+          targetZoneId = zId;
+          targetZone = found;
+          dwellTimeSeconds = dwell;
+          break;
+        }
+        if (!targetZoneId) {
+          targetZoneId = zId;
+          targetZone = found;
+          dwellTimeSeconds = dwell;
+        }
+      }
+    }
+
+    let lastFenceCrossed: string | undefined;
+    if (state.lastFenceCrossing.size > 0) {
+      let latestCrossMs = 0;
+      for (const [fenceId, entry] of state.lastFenceCrossing.entries()) {
+        if (entry.timestampMs > latestCrossMs) {
+          latestCrossMs = entry.timestampMs;
+          lastFenceCrossed = fenceId;
+        }
+      }
+    }
+
+    const isRestrictedArea = targetZone ? (Boolean(targetZone.isRestricted) || targetZone.type === 'RESTRICTED_AREA') : false;
+
+    return {
+      zoneId: targetZoneId,
+      zoneName: targetZone?.name,
+      isRestricted: isRestrictedArea,
+      isInsideRestrictedZone: isRestrictedArea,
+      lastFenceCrossed,
+      dwellTimeSeconds,
+      direction: (state as any).direction || (state as any).currentDirection,
+    };
+  }
+
+  /**
    * Clear all spatial tracking states.
    */
   public resetAll(): void {

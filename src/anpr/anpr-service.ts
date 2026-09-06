@@ -59,6 +59,24 @@ export class AnprService {
 
   // Track ID -> Persistent ANPR Record
   private recordsByTrackId: Map<string, PersistentVehicleAnprRecord> = new Map();
+  private readonly maxTrackRecords = 250;
+
+  // In-memory ANPR Watchlists
+  private watchlists: Array<{
+    id: string;
+    plateNumber: string;
+    category: string;
+    labelName?: string;
+    priority?: string;
+    notes?: string;
+    active?: boolean;
+    createdAt?: string;
+    updatedAt?: string;
+  }> = [
+    { id: 'anpr-wl-1', plateNumber: 'AZ982FX', category: 'STOLEN_VEHICLE', labelName: 'Stolen Border Crossing Hotlist', priority: 'CRITICAL', active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'anpr-wl-2', plateNumber: 'TX-802-KL', category: 'SMUGGLING_CONVOY', labelName: 'Sector 4 Smuggling Watch', priority: 'HIGH', active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    { id: 'anpr-wl-3', plateNumber: 'TS09AB1234', category: 'BORDER_VIOLATION', labelName: 'Restricted Crossing Evader', priority: 'CRITICAL', active: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+  ];
 
   // Bounded event and observation history
   private eventHistory: AnprEvent[] = [];
@@ -214,10 +232,41 @@ export class AnprService {
           normalizePlateText(w.plateNumber).normalizedText === record.normalizedPlate
       );
       if (match) {
+        const isNewlyMatched = !record.isWatchlistMatch;
         record.isWatchlistMatch = true;
         record.watchlistCategory = match.category;
         record.watchlistEntryId = match.id;
         this.metrics.watchlistMatchesTotal++;
+
+        // Emit anpr.watchlist.match on positive correlation with active watchlist
+        if (isNewlyMatched || !existing || !existing.isWatchlistMatch) {
+          this.dispatchEvent({
+            eventId: `evt-anpr-wl-${Date.now()}-${vehicleTrack.trackId}`,
+            eventType: 'anpr.watchlist.match',
+            cameraId: plate.cameraId,
+            vehicleTrackId: vehicleTrack.trackId,
+            plateDetectionId: plate.plateDetectionId,
+            timestamp: plate.timestamp,
+            plateText: record.bestPlateText,
+            normalizedPlate: record.normalizedPlate,
+            recognitionStatus: record.recognitionStatus,
+            confidence: {
+              vehicle: record.vehicleConfidence,
+              plate: record.plateDetectionConfidence,
+              ocr: record.ocrConfidence,
+              association: record.associationConfidence,
+              overall: record.overallConfidence,
+            },
+            vehicleClass: record.vehicleClass,
+            position: plate.boundingBox,
+            spatialContext: record.spatialContext,
+            evidenceReference: record.evidenceReference,
+            isSimulation: record.isSimulation,
+            watchlistCategory: match.category,
+            watchlistEntryId: match.id,
+            isWatchlistMatch: true,
+          });
+        }
       }
     }
 
@@ -407,7 +456,7 @@ export class AnprService {
           rawOcrText: (track as any).simulatedPlateText,
           ocrConfidence: (track as any).simulatedOcrConfidence,
           spatialContext,
-          watchlists: options.watchlists,
+          watchlists: options.watchlists || this.getWatchlists(),
         });
 
         updatedRecords.push(record);
@@ -417,7 +466,118 @@ export class AnprService {
       }
     }
 
+    this.pruneOldRecords();
     return updatedRecords;
+  }
+
+  /**
+   * Enforces bounded in-memory retention of persistent vehicle ANPR records.
+   */
+  public pruneOldRecords(maxAgeHours = 24): { pruned: number; remaining: number } {
+    let pruned = 0;
+    const cutoff = Date.now() - maxAgeHours * 60 * 60 * 1000;
+    for (const [id, rec] of this.recordsByTrackId.entries()) {
+      if (new Date(rec.lastSeenAt).getTime() < cutoff) {
+        this.recordsByTrackId.delete(id);
+        this.lastEmittedSignature.delete(id);
+        this.trackFrameCounter.delete(id);
+        pruned++;
+      }
+    }
+
+    if (this.recordsByTrackId.size > this.maxTrackRecords) {
+      const entries = Array.from(this.recordsByTrackId.entries());
+      entries.sort((a, b) => Date.parse(a[1].lastSeenAt) - Date.parse(b[1].lastSeenAt));
+
+      const toRemove = entries.slice(0, entries.length - this.maxTrackRecords);
+      for (const [id] of toRemove) {
+        this.recordsByTrackId.delete(id);
+        this.lastEmittedSignature.delete(id);
+        this.trackFrameCounter.delete(id);
+        pruned++;
+      }
+    }
+
+    return { pruned, remaining: this.recordsByTrackId.size };
+  }
+
+  public getRetentionPolicy() {
+    return {
+      maxRecords: this.maxTrackRecords,
+      maxTrackRecords: this.maxTrackRecords,
+      currentRecordCount: this.recordsByTrackId.size,
+      maxEventHistory: 500,
+      ttlHours: 24,
+      strategy: 'BOUNDED_LRU_IN_MEMORY' as const,
+    };
+  }
+
+  /**
+   * ANPR Watchlist CRUD methods
+   */
+  public getWatchlists() {
+    return [...this.watchlists];
+  }
+
+  public addWatchlistEntry(entry: {
+    plateNumber: string;
+    category: string;
+    labelName?: string;
+    priority?: string;
+    notes?: string;
+    active?: boolean;
+  }) {
+    const normalized = normalizePlateText(entry.plateNumber).normalizedText;
+    const newEntry = {
+      id: `anpr-wl-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      plateNumber: normalized,
+      rawPlateNumber: entry.plateNumber,
+      category: entry.category,
+      labelName: entry.labelName || `Plate ${entry.plateNumber}`,
+      priority: entry.priority || 'HIGH',
+      notes: entry.notes || '',
+      active: entry.active !== false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.watchlists.unshift(newEntry);
+    return newEntry;
+  }
+
+  public updateWatchlistEntry(
+    id: string,
+    updates: Partial<{
+      plateNumber: string;
+      category: string;
+      labelName: string;
+      priority: string;
+      notes: string;
+      active: boolean;
+    }>
+  ) {
+    const idx = this.watchlists.findIndex((w) => w.id === id);
+    if (idx === -1) return null;
+    this.watchlists[idx] = {
+      ...this.watchlists[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    return this.watchlists[idx];
+  }
+
+  public toggleWatchlistEntry(id: string) {
+    const entry = this.watchlists.find((w) => w.id === id);
+    if (!entry) return null;
+    entry.active = !entry.active;
+    entry.updatedAt = new Date().toISOString();
+    return entry;
+  }
+
+  public deleteWatchlistEntry(id: string) {
+    const idx = this.watchlists.findIndex((w) => w.id === id);
+    if (idx === -1) return false;
+    this.watchlists.splice(idx, 1);
+    return true;
   }
 
   /**

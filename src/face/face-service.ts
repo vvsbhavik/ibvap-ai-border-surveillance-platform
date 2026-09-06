@@ -66,6 +66,10 @@ export class FaceService {
   // Person Track ID -> Persistent Face Record
   private recordsByTrackId: Map<string, PersistentPersonFaceRecord> = new Map();
 
+  // Frame count throttle per track
+  private trackFrameCounters: Map<string, number> = new Map();
+  private readonly maxTrackRecords = 250;
+
   // Bounded event and observation history
   private eventHistory: FaceEvent[] = [];
   private eventListeners: Set<FaceEventListener> = new Set();
@@ -431,6 +435,179 @@ export class FaceService {
     });
 
     return res.record;
+  }
+
+  /**
+   * Frame-level Face Analytics processing for active person tracks in unified pipeline.
+   * Throttles evaluation per track, integrates spatial context, and isolates processing errors.
+   */
+  public processFrame(
+    frame: any,
+    activeTracks: Track[],
+    options: {
+      getSpatialContext?: (track: Track) => FaceObservation['spatialContext'];
+      watchlists?: FaceWatchlistEntry[];
+    } = {}
+  ): PersistentPersonFaceRecord[] {
+    if (!this.config.enabled) return [];
+
+    const updatedRecords: PersistentPersonFaceRecord[] = [];
+
+    try {
+      const personTracks = activeTracks.filter(
+        (t) => t.objectType === 'person' && t.state !== 'ENDED'
+      );
+
+      for (const personTrack of personTracks) {
+        // Gating: check minimum detection confidence
+        if (personTrack.currentConfidence < this.config.minPersonConfidenceForFace) {
+          continue;
+        }
+
+        // Frame throttle per track
+        const count = (this.trackFrameCounters.get(personTrack.trackId) || 0) + 1;
+        this.trackFrameCounters.set(personTrack.trackId, count);
+
+        const isFirst = !this.recordsByTrackId.has(personTrack.trackId);
+        const shouldProcess = isFirst || count % (this.config.throttleFramesPerTrack || 2) === 0;
+
+        if (!shouldProcess) {
+          continue;
+        }
+
+        const face = this.detector.extractFaceFromPersonTrack(personTrack);
+        if (!face) continue;
+
+        const spatialContext = options.getSpatialContext ? options.getSpatialContext(personTrack) : undefined;
+
+        const res = this.ingestObservation({
+          personTrack,
+          face,
+          spatialContext,
+          watchlists: options.watchlists,
+          isSimulation: personTrack.isSimulation ?? true,
+        });
+
+        if (res?.record) {
+          updatedRecords.push(res.record);
+        }
+      }
+
+      this.pruneOldRecords();
+    } catch (err) {
+      console.error('[FaceService] Error processing frame in unified pipeline:', err);
+    }
+
+    return updatedRecords;
+  }
+
+  /**
+   * Enforces bounded in-memory retention of persistent face records.
+   */
+  public pruneOldRecords(maxAgeHours = 24): { pruned: number; remaining: number } {
+    let pruned = 0;
+    const cutoff = Date.now() - maxAgeHours * 60 * 60 * 1000;
+    for (const [id, rec] of this.recordsByTrackId.entries()) {
+      if (new Date(rec.lastSeenAt).getTime() < cutoff) {
+        this.recordsByTrackId.delete(id);
+        this.lastEmittedSignature.delete(id);
+        this.trackFrameCounters.delete(id);
+        pruned++;
+      }
+    }
+
+    if (this.recordsByTrackId.size > this.maxTrackRecords) {
+      const entries = Array.from(this.recordsByTrackId.entries());
+      entries.sort((a, b) => new Date(a[1].lastSeenAt).getTime() - new Date(b[1].lastSeenAt).getTime());
+
+      const toRemove = entries.slice(0, entries.length - this.maxTrackRecords);
+      for (const [id] of toRemove) {
+        this.recordsByTrackId.delete(id);
+        this.lastEmittedSignature.delete(id);
+        this.trackFrameCounters.delete(id);
+        pruned++;
+      }
+    }
+
+    return { pruned, remaining: this.recordsByTrackId.size };
+  }
+
+  public getRetentionPolicy() {
+    return {
+      maxRecords: this.maxTrackRecords,
+      maxTrackRecords: this.maxTrackRecords,
+      maxObservationsPerTrack: this.config.maxObservationsPerTrack,
+      currentRecordCount: this.recordsByTrackId.size,
+      maxEventHistory: 500,
+      ttlHours: 24,
+      strategy: 'BOUNDED_LRU_IN_MEMORY' as const,
+    };
+  }
+
+  /**
+   * Face Watchlist Management CRUD
+   */
+  public addWatchlistEntry(
+    entry: Partial<FaceWatchlistEntry> & {
+      displayName: string;
+      category: any;
+    }
+  ): FaceWatchlistEntry {
+    const id = entry.id || `fwl-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const fullEntry: FaceWatchlistEntry = {
+      id,
+      displayName: entry.displayName,
+      category: entry.category,
+      externalReference: entry.externalReference || `REF-${id}`,
+      faceTemplateId: entry.faceTemplateId || id,
+      embeddingVersion: entry.embeddingVersion || 'v2.1',
+      modelVersion: entry.modelVersion || 'facenet-512',
+      threshold: entry.threshold ?? 0.82,
+      status: entry.status || 'ACTIVE',
+      priority: entry.priority || 'HIGH',
+      notes: entry.notes || '',
+      createdAt: entry.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      isSynthetic: true,
+      ...(entry as any),
+    };
+    return this.matcher.addWatchlist(fullEntry);
+  }
+
+  public updateWatchlistEntry(id: string, updates: Partial<FaceWatchlistEntry>): FaceWatchlistEntry | null {
+    return this.matcher.updateWatchlist(id, updates);
+  }
+
+  public toggleWatchlistEntry(id: string): FaceWatchlistEntry | null {
+    return this.matcher.toggleWatchlist(id);
+  }
+
+  public deleteWatchlistEntry(id: string): boolean {
+    return this.matcher.deleteWatchlist(id);
+  }
+
+  /**
+   * Search records with query term matching and metadata filtering
+   */
+  public searchRecords(filter: FaceQueryFilter & { q?: string }): {
+    total: number;
+    records: PersistentPersonFaceRecord[];
+  } {
+    let list = this.queryRecords(filter);
+    if (filter.q) {
+      const term = filter.q.toLowerCase();
+      list = list.filter(
+        (r) =>
+          r.personTrackId.toLowerCase().includes(term) ||
+          r.watchlistDisplayName?.toLowerCase().includes(term) ||
+          r.watchlistCategory?.toLowerCase().includes(term) ||
+          r.cameraIdentifier?.toLowerCase().includes(term)
+      );
+    }
+    return {
+      total: list.length,
+      records: list,
+    };
   }
 
   public getRecord(personTrackId: string): PersistentPersonFaceRecord | undefined {

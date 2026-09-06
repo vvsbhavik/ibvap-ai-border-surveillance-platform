@@ -86,6 +86,7 @@ async function runFaceVerificationSuite() {
     cameraId: 'CAM-01',
     objectType: 'vehicle',
     class: 'car',
+    createdAt: new Date().toISOString(),
     firstSeenAt: new Date().toISOString(),
     lastSeenAt: new Date().toISOString(),
     lastBoundingBox: { x: 0.2, y: 0.3, width: 0.3, height: 0.2 },

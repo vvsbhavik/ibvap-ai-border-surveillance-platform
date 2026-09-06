@@ -175,7 +175,7 @@ export interface PersistentPersonFaceRecord {
 export interface FaceWatchlistEntry {
   id: string;
   displayName: string;
-  category: 'PERSON_OF_INTEREST' | 'EXPELLED_INDIVIDUAL' | 'AUTHORIZED_BORDER_STAFF' | 'HIGH_RISK_WARRANT';
+  category: 'PERSON_OF_INTEREST' | 'EXPELLED_INDIVIDUAL' | 'AUTHORIZED_BORDER_STAFF' | 'HIGH_RISK_WARRANT' | string;
   externalReference: string;
   faceTemplateId: string;
   embeddingVersion: string;
@@ -185,6 +185,7 @@ export interface FaceWatchlistEntry {
   priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   notes: string;
   thumbnailUrl?: string;
+  templateEmbedding?: number[];
   createdAt: string;
   updatedAt: string;
   isSynthetic: true;
@@ -247,3 +248,22 @@ export interface FaceQueryFilter {
   endDate?: string;
   limit?: number;
 }
+
+export interface FaceTelemetryMetrics {
+  facesDetectedTotal: number;
+  facesEvaluatedTotal: number;
+  facesGoodQualityTotal: number;
+  facesAcceptableQualityTotal: number;
+  facesPoorQualityTotal: number;
+  facesUnreadableTotal: number;
+  associationsTotal: number;
+  associationsRejectedTotal: number;
+  watchlistMatchesTotal: number;
+  watchlistPossibleMatchesTotal: number;
+  eventsEmittedTotal: number;
+  lastProcessingLatencyMs: number | null;
+}
+
+export type FaceEventPayload = FaceEvent;
+export type SyntheticFaceWatchlist = FaceWatchlistEntry;
+

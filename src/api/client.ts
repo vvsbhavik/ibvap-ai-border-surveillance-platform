@@ -40,6 +40,14 @@ import {
   TrackingSubsystemHealth,
   TrackState,
 } from '../tracking/types';
+import {
+  PersistentPersonFaceRecord,
+  FaceTelemetryMetrics,
+  FaceEventPayload,
+  SyntheticFaceWatchlist,
+  FaceQualityState,
+  FaceRecognitionStatus,
+} from '../face/types';
 
 const BASE_URL = '/api/v1';
 
@@ -679,6 +687,139 @@ export const api = {
       fetchJson<{ success: boolean; message: string }>(`${BASE_URL}/ai/camera/${cameraId}/disable`, {
         method: 'POST',
       }),
+    getStatus: () =>
+      fetchJson<{
+        success: boolean;
+        telemetry: {
+          status: 'READY' | 'DEGRADED' | 'UNAVAILABLE' | 'CONFIGURATION_REQUIRED';
+          modelName: string;
+          provider: string;
+          isLiveEnvironmentAvailable: boolean;
+          isSimulatedData: boolean;
+          totalRequests: number;
+          successfulRequests: number;
+          failedRequests: number;
+          lastLatencyMs: number;
+          lastError?: string;
+        };
+        live: {
+          state: 'NOT_IMPLEMENTED' | 'READY';
+          reason: string;
+          supportedModes: string[];
+          requiredCapabilities: string[];
+        };
+      }>(`${BASE_URL}/ai/status`),
+    copilotQuery: (params: {
+      query: string;
+      cameraId?: string;
+      incidentId?: string;
+      alertId?: string;
+      trackId?: string;
+    }) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          id: string;
+          response: string;
+          verifiedFacts?: string[];
+          citations?: { type: string; id: string; label: string }[];
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          toolInvocations?: { toolName: string; resultSummary: string }[];
+          latencyMs: number;
+          modelName: string;
+          safetyRating: string;
+        };
+      }>(`${BASE_URL}/ai/copilot/query`, {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
+    summarizeIncident: (incidentId: string) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          incidentId: string;
+          incidentNumber: string;
+          summary: string;
+          keyFacts: string[];
+          involvedCameras: string[];
+          recommendedActions: string[];
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          latencyMs: number;
+        };
+      }>(`${BASE_URL}/ai/incidents/${incidentId}/summarize`, {
+        method: 'POST',
+      }),
+    explainAlert: (alertId: string) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          alertId: string;
+          alertNumber: string;
+          explanation: string;
+          causalFactors: string[];
+          recommendedVerification: string;
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          latencyMs: number;
+        };
+      }>(`${BASE_URL}/ai/alerts/${alertId}/explain`, {
+        method: 'POST',
+      }),
+    investigateEntity: (params: { entityType: string; entityId: string; query?: string }) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          id: string;
+          response: string;
+          verifiedFacts?: string[];
+          citations?: { type: string; id: string; label: string }[];
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          toolInvocations?: { toolName: string; resultSummary: string }[];
+          latencyMs: number;
+        };
+      }>(`${BASE_URL}/ai/investigate`, {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
+    generateTimeline: (params: { incidentId?: string; cameraId?: string; startTime?: string; endTime?: string }) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          id: string;
+          response: string;
+          verifiedFacts?: string[];
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          latencyMs: number;
+        };
+      }>(`${BASE_URL}/ai/timeline`, {
+        method: 'POST',
+        body: JSON.stringify(params),
+      }),
+    queryCameraCopilot: (cameraId: string, query: string) =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          id: string;
+          response: string;
+          verifiedFacts?: string[];
+          citations?: { type: string; id: string; label: string }[];
+          provenance: 'LIVE' | 'SIMULATION' | 'SYNTHETIC';
+          toolInvocations?: { toolName: string; resultSummary: string }[];
+          latencyMs: number;
+        };
+      }>(`${BASE_URL}/ai/camera/${cameraId}/copilot`, {
+        method: 'POST',
+        body: JSON.stringify({ query }),
+      }),
+    getLiveStatus: () =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          state: string;
+          reason: string;
+          supportedModes: string[];
+          requiredCapabilities: string[];
+        };
+      }>(`${BASE_URL}/ai/live/status`),
   },
 
   detections: {
@@ -743,5 +884,48 @@ export const api = {
       fetchJson<{ success: boolean; message: string }>(`${BASE_URL}/tracking/reset/${cameraId}`, {
         method: 'POST',
       }),
+  },
+
+  faces: {
+    list: (params?: {
+      personTrackId?: string;
+      cameraId?: string;
+      quality?: FaceQualityState;
+      recognitionStatus?: FaceRecognitionStatus;
+      isWatchlistMatch?: boolean;
+      watchlistCategory?: string;
+      limit?: number;
+    }) => {
+      const qs = new URLSearchParams();
+      if (params?.personTrackId) qs.set('personTrackId', params.personTrackId);
+      if (params?.cameraId) qs.set('cameraId', params.cameraId);
+      if (params?.quality) qs.set('quality', params.quality);
+      if (params?.recognitionStatus) qs.set('recognitionStatus', params.recognitionStatus);
+      if (params?.isWatchlistMatch !== undefined) qs.set('isWatchlistMatch', String(params.isWatchlistMatch));
+      if (params?.watchlistCategory) qs.set('watchlistCategory', params.watchlistCategory);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      return fetchJson<{ success: boolean; total: number; records: PersistentPersonFaceRecord[] }>(
+        `${BASE_URL}/faces?${qs.toString()}`
+      );
+    },
+    getMetrics: () =>
+      fetchJson<{ success: boolean; metrics: FaceTelemetryMetrics }>(`${BASE_URL}/faces/metrics`),
+    getEvents: (limit?: number) =>
+      fetchJson<{ success: boolean; total: number; events: FaceEventPayload[] }>(
+        `${BASE_URL}/faces/events${limit ? `?limit=${limit}` : ''}`
+      ),
+    getWatchlists: () =>
+      fetchJson<{ success: boolean; total: number; watchlists: SyntheticFaceWatchlist[] }>(
+        `${BASE_URL}/faces/watchlists`
+      ),
+    getByPersonTrackId: (personTrackId: string) =>
+      fetchJson<{ success: boolean; record: PersistentPersonFaceRecord }>(
+        `${BASE_URL}/faces/persons/${personTrackId}`
+      ),
+    runScenario: (scenarioId: string) =>
+      fetchJson<{ success: boolean; scenario: string; message: string; result: any }>(
+        `${BASE_URL}/faces/scenarios/${scenarioId}`,
+        { method: 'POST' }
+      ),
   },
 };

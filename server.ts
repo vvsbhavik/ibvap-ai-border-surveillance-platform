@@ -26,6 +26,7 @@ import { aiInferenceService } from './src/ai-inference/inference-service';
 import { trackingService } from './src/tracking/tracking-service';
 import { spatialEngine } from './src/spatial/spatial-engine';
 import { faceService } from './src/face/face-service';
+import { anprService } from './src/anpr/anpr-service';
 import { dataStore } from './src/server/store';
 
 async function startServer() {
@@ -347,6 +348,35 @@ async function startServer() {
         }
       }
     }
+
+    // --- Face Analytics & ANPR Integration in Unified Pipeline ---
+    const rawFrame = videoGateway.getLatestFrame(frame.cameraId);
+    const activePersonTracks = frame.tracks.filter((t) => t.objectType === 'person' && t.state !== 'ENDED');
+    const activeVehicleTracks = frame.tracks.filter((t) => t.objectType === 'vehicle' && t.state !== 'ENDED');
+
+    if (activePersonTracks.length > 0) {
+      try {
+        faceService.processFrame(rawFrame, activePersonTracks, {
+          getSpatialContext: (t) => spatialEngine.getTrackSpatialContext(t.trackId, activeZones),
+        });
+      } catch (err) {
+        console.error('[Pipeline] Face analytics execution error:', err);
+      }
+    }
+
+    if (activeVehicleTracks.length > 0) {
+      try {
+        anprService.processFrame(
+          rawFrame || ({ cameraId: cameraIdentifier, timestamp: frame.timestamp, width: 1920, height: 1080 } as any),
+          activeVehicleTracks,
+          {
+            getSpatialContext: (t) => spatialEngine.getTrackSpatialContext(t.trackId, activeZones),
+          }
+        );
+      } catch (err) {
+        console.error('[Pipeline] ANPR execution error:', err);
+      }
+    }
   });
 
   // Hook Multi-Object Tracking events to DataStore event bus
@@ -437,12 +467,89 @@ async function startServer() {
         trackId: faceEvt.personTrackId,
         position: faceEvt.spatialContext ? { x: 0.5, y: 0.5 } : undefined,
         evidenceReference: faceEvt.evidenceReference?.evidenceId || 'unavailable',
+        escalatedToIncidentId: undefined as string | undefined,
         metadata: {
           watchlistEntryId: faceEvt.watchlistEntryId,
           similarityScore: faceEvt.similarity,
           quality: faceEvt.quality,
         },
       };
+
+      // Link to existing active incident or escalate critical alarm
+      const existingIncident = dataStore.incidents.find(
+        (inc) =>
+          (inc.status === 'OPEN' || inc.status === 'INVESTIGATING') &&
+          (inc.primaryCameraId === faceEvt.cameraId ||
+            inc.primaryCameraId === cam?.id ||
+            inc.sectorId === cam?.sectorId)
+      );
+
+      if (existingIncident) {
+        faceAlert.escalatedToIncidentId = existingIncident.id;
+        existingIncident.timeline.push({
+          id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: faceEvt.timestamp,
+          actorCallsign: 'FACE_ANALYTICS',
+          actionType: 'TRIGGER_ALARM',
+          description: `Confirmed biometric watchlist match: ${faceEvt.watchlistDisplayName} on track ${faceEvt.personTrackId}`,
+          metadata: {
+            alertId,
+            personTrackId: faceEvt.personTrackId,
+            watchlistEntryId: faceEvt.watchlistEntryId,
+            similarity: faceEvt.similarity,
+          },
+        });
+        dataStore.broadcastEvent({
+          eventId: `evt-inc-upd-${Date.now()}`,
+          eventType: 'incident.updated',
+          timestamp: faceEvt.timestamp,
+          source: faceEvt.cameraIdentifier || faceEvt.cameraId,
+          payload: existingIncident,
+        });
+      } else {
+        const incidentId = `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const incNum = `INC-${new Date().getFullYear()}-${String(dataStore.incidents.length + 1).padStart(4, '0')}`;
+        const newIncident = {
+          id: incidentId,
+          incidentNumber: incNum,
+          title: `Biometric Watchlist Match: ${faceEvt.watchlistDisplayName}`,
+          summary: `Automated facial recognition match for ${faceEvt.watchlistDisplayName} on Track ${faceEvt.personTrackId} (${cam?.cameraId || faceEvt.cameraId}).`,
+          severity: 'CRITICAL' as const,
+          status: 'OPEN' as const,
+          sectorId: cam?.sectorId || 'sec-bravo',
+          sectorName: cam?.sectorName || 'Sector Bravo',
+          primaryCameraId: cam?.id || faceEvt.cameraId,
+          primaryCameraIdentifier: cam?.cameraId || faceEvt.cameraId,
+          leadCommanderCallsign: 'BIO_WATCH',
+          createdAt: faceEvt.timestamp,
+          relatedCameraIdentifiers: [cam?.cameraId || faceEvt.cameraId],
+          evidenceCount: 1,
+          containmentNotes: `Confirmed face match with entry ${faceEvt.watchlistEntryId}. Similarity: ${((faceEvt.similarity || 0) * 100).toFixed(1)}%.`,
+          timeline: [
+            {
+              id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              timestamp: faceEvt.timestamp,
+              actorCallsign: 'FACE_ANALYTICS',
+              actionType: 'TRIGGER_ALARM',
+              description: `Initial biometric match for ${faceEvt.watchlistDisplayName} on track ${faceEvt.personTrackId}`,
+              metadata: {
+                alertId,
+                personTrackId: faceEvt.personTrackId,
+                similarity: faceEvt.similarity,
+              },
+            },
+          ],
+        };
+        dataStore.incidents.unshift(newIncident as any);
+        faceAlert.escalatedToIncidentId = incidentId;
+        dataStore.broadcastEvent({
+          eventId: `evt-inc-create-${incidentId}`,
+          eventType: 'incident.created',
+          timestamp: faceEvt.timestamp,
+          source: faceEvt.cameraIdentifier || faceEvt.cameraId,
+          payload: newIncident,
+        });
+      }
 
       dataStore.alerts.unshift(faceAlert as any);
       dataStore.broadcastEvent({
@@ -451,6 +558,148 @@ async function startServer() {
         timestamp: faceEvt.timestamp,
         source: faceEvt.cameraIdentifier || faceEvt.cameraId,
         payload: faceAlert,
+      });
+    }
+  });
+
+  // Hook ANPR events to DataStore realtime event bus & create operational alerts on watchlist hits
+  anprService.onAnprEvent((anprEvt) => {
+    dataStore.broadcastEvent({
+      eventId: anprEvt.eventId,
+      eventType: anprEvt.eventType,
+      timestamp: anprEvt.timestamp,
+      source: anprEvt.cameraId,
+      payload: anprEvt,
+    });
+
+    // Create alert on ANPR watchlist match
+    if (anprEvt.eventType === 'anpr.watchlist.match' || (anprEvt.isWatchlistMatch && anprEvt.eventType === 'anpr.recognition.confirmed')) {
+      const alertId = `alt-anpr-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+      const cam = dataStore.cameras.find((c) => c.id === anprEvt.cameraId || c.cameraId === anprEvt.cameraId);
+      const isCritical = anprEvt.watchlistCategory === 'STOLEN_VEHICLE' || anprEvt.watchlistCategory === 'BORDER_VIOLATION';
+
+      const anprAlert = {
+        id: alertId,
+        alertId,
+        cameraId: anprEvt.cameraId,
+        cameraIdentifier: cam?.cameraId || anprEvt.cameraId,
+        zoneId: anprEvt.spatialContext?.zoneId,
+        zoneName: anprEvt.spatialContext?.zoneName || 'Surveillance Sector',
+        sectorId: cam?.sectorId || 'sec-bravo',
+        sectorName: cam?.sectorName || 'Sector Bravo',
+        ruleType: 'ANPR_WATCHLIST_MATCH',
+        severity: isCritical ? ('CRITICAL' as const) : ('HIGH' as const),
+        status: 'NEW' as const,
+        title: `Watchlist Match: Plate ${anprEvt.plateText}`,
+        description: `Vehicle with plate ${anprEvt.plateText} matched watchlist category ${anprEvt.watchlistCategory || 'HOTLIST'} on Track ${anprEvt.vehicleTrackId}${anprEvt.spatialContext?.isRestricted ? ` in restricted zone ${anprEvt.spatialContext.zoneName}` : ''}`,
+        timestamp: anprEvt.timestamp,
+        firstDetectedAt: anprEvt.timestamp,
+        lastDetectedAt: anprEvt.timestamp,
+        threatScore: isCritical ? 96 : 85,
+        confidence: anprEvt.confidence.overall || 0.92,
+        acknowledged: false,
+        source: 'ANPR',
+        isSimulation: anprEvt.isSimulation ?? true,
+        eventId: anprEvt.eventId,
+        trackId: anprEvt.vehicleTrackId,
+        position: anprEvt.position,
+        evidenceReference: anprEvt.evidenceReference?.evidenceId || 'unavailable',
+        escalatedToIncidentId: undefined as string | undefined,
+        metadata: {
+          plateText: anprEvt.plateText,
+          normalizedPlate: anprEvt.normalizedPlate,
+          watchlistCategory: anprEvt.watchlistCategory,
+          watchlistEntryId: anprEvt.watchlistEntryId,
+          vehicleClass: anprEvt.vehicleClass,
+          recognitionStatus: anprEvt.recognitionStatus,
+          ocrConfidence: anprEvt.confidence.ocr,
+        },
+      };
+
+      // Check for active incident in sector to link, or escalate if critical
+      const existingIncident = dataStore.incidents.find(
+        (inc) =>
+          (inc.status === 'OPEN' || inc.status === 'INVESTIGATING') &&
+          (inc.primaryCameraId === anprEvt.cameraId ||
+            inc.primaryCameraId === cam?.id ||
+            inc.sectorId === cam?.sectorId)
+      );
+
+      if (existingIncident) {
+        anprAlert.escalatedToIncidentId = existingIncident.id;
+        existingIncident.timeline.push({
+          id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: anprEvt.timestamp,
+          actorCallsign: 'ANPR_SYSTEM',
+          actionType: 'TRIGGER_ALARM',
+          description: `ANPR Watchlist hit for plate ${anprEvt.plateText} (${anprEvt.watchlistCategory || 'WATCHLIST'}) on track ${anprEvt.vehicleTrackId}`,
+          metadata: {
+            alertId,
+            plateText: anprEvt.plateText,
+            normalizedPlate: anprEvt.normalizedPlate,
+            trackId: anprEvt.vehicleTrackId,
+          },
+        });
+        dataStore.broadcastEvent({
+          eventId: `evt-inc-upd-${Date.now()}`,
+          eventType: 'incident.updated',
+          timestamp: anprEvt.timestamp,
+          source: anprEvt.cameraId,
+          payload: existingIncident,
+        });
+      } else if (isCritical) {
+        const incidentId = `inc-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+        const incNum = `INC-${new Date().getFullYear()}-${String(dataStore.incidents.length + 1).padStart(4, '0')}`;
+        const newIncident = {
+          id: incidentId,
+          incidentNumber: incNum,
+          title: `Critical Watchlist Vehicle: Plate ${anprEvt.plateText}`,
+          summary: `Automated ANPR alarm triggered by Track ${anprEvt.vehicleTrackId} with license plate ${anprEvt.plateText} (${anprEvt.watchlistCategory}) on camera ${cam?.cameraId || anprEvt.cameraId}.`,
+          severity: 'CRITICAL' as const,
+          status: 'OPEN' as const,
+          sectorId: cam?.sectorId || 'sec-bravo',
+          sectorName: cam?.sectorName || 'Sector Bravo',
+          primaryCameraId: cam?.id || anprEvt.cameraId,
+          primaryCameraIdentifier: cam?.cameraId || anprEvt.cameraId,
+          leadCommanderCallsign: 'ANPR_WATCH',
+          createdAt: anprEvt.timestamp,
+          relatedCameraIdentifiers: [cam?.cameraId || anprEvt.cameraId],
+          evidenceCount: 1,
+          containmentNotes: `Watchlist vehicle detected: ${anprEvt.plateText}. Category: ${anprEvt.watchlistCategory}. Track: ${anprEvt.vehicleTrackId}.`,
+          timeline: [
+            {
+              id: `tml-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+              timestamp: anprEvt.timestamp,
+              actorCallsign: 'ANPR_SYSTEM',
+              actionType: 'TRIGGER_ALARM',
+              description: `Initial ANPR watchlist match: ${anprEvt.plateText} on track ${anprEvt.vehicleTrackId}`,
+              metadata: {
+                alertId,
+                plateText: anprEvt.plateText,
+                trackId: anprEvt.vehicleTrackId,
+                category: anprEvt.watchlistCategory,
+              },
+            },
+          ],
+        };
+        dataStore.incidents.unshift(newIncident as any);
+        anprAlert.escalatedToIncidentId = incidentId;
+        dataStore.broadcastEvent({
+          eventId: `evt-inc-create-${incidentId}`,
+          eventType: 'incident.created',
+          timestamp: anprEvt.timestamp,
+          source: anprEvt.cameraId,
+          payload: newIncident,
+        });
+      }
+
+      dataStore.alerts.unshift(anprAlert as any);
+      dataStore.broadcastEvent({
+        eventId: `evt-alert-${alertId}`,
+        eventType: 'alert.created',
+        timestamp: anprEvt.timestamp,
+        source: anprEvt.cameraId,
+        payload: anprAlert,
       });
     }
   });

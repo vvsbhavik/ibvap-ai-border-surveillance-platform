@@ -32,6 +32,7 @@ import { IncidentsScreen } from './screens/IncidentsScreen';
 import { EvidenceScreen } from './screens/EvidenceScreen';
 import { GisScreen } from './screens/GisScreen';
 import { AnprScreen } from './screens/AnprScreen';
+import { FacesScreen } from './screens/FacesScreen';
 import { WatchlistsScreen } from './screens/WatchlistsScreen';
 import { CopilotScreen } from './screens/CopilotScreen';
 import { HealthScreen } from './screens/HealthScreen';
@@ -564,6 +565,18 @@ export function App() {
                   />
                 )}
 
+                {currentScreen === 'faces' && (
+                  <FacesScreen
+                    onEscalateFace={(rec) => {
+                      handleEscalateAlert(
+                        `alt-face-${rec.personTrackId}`,
+                        `Biometric Watchlist Hit - ${rec.watchlistDisplayName || 'Subject of Interest'}`,
+                        `Positive biometric match for ${rec.watchlistDisplayName} on Person Track ${rec.personTrackId} (Confidence: ${(((rec.similarityScore ?? 0.9)) * 100).toFixed(1)}%) in ${rec.spatialContext?.sectorName || 'Sector Bravo'}`
+                      );
+                    }}
+                  />
+                )}
+
                 {currentScreen === 'watchlists' && (
                   <WatchlistsScreen
                     watchlists={watchlists}
@@ -577,6 +590,7 @@ export function App() {
                     cameras={visibleCameras}
                     alerts={visibleAlerts}
                     incidents={visibleIncidents}
+                    onNavigate={(screen) => setCurrentScreen(screen as any)}
                   />
                 )}
 

@@ -97,10 +97,11 @@ export function computeCosineSimilarity(vecA: number[], vecB: number[]): number 
  * Deterministic synthetic embedding generator based on template ID or seed string.
  * Generates reproducible unit vectors for testing without fabricating real biometrics.
  */
-export function generateSyntheticEmbedding(seed: string, length = DEFAULT_VECTOR_LENGTH): number[] {
+export function generateSyntheticEmbedding(seed: string = 'default-seed', length = DEFAULT_VECTOR_LENGTH): number[] {
+  const safeSeed = String(seed || 'default-seed');
   let h = 2166136261 >>> 0;
-  for (let i = 0; i < seed.length; i++) {
-    h = Math.imul(h ^ seed.charCodeAt(i), 16777619) >>> 0;
+  for (let i = 0; i < safeSeed.length; i++) {
+    h = Math.imul(h ^ safeSeed.charCodeAt(i), 16777619) >>> 0;
   }
 
   const vec: number[] = new Array(length);
@@ -143,6 +144,37 @@ export class FaceMatcher {
 
   public setWatchlists(watchlists: FaceWatchlistEntry[]): void {
     this.watchlists = [...watchlists];
+  }
+
+  public addWatchlist(entry: FaceWatchlistEntry): FaceWatchlistEntry {
+    this.watchlists.unshift(entry);
+    return entry;
+  }
+
+  public updateWatchlist(id: string, updates: Partial<FaceWatchlistEntry>): FaceWatchlistEntry | null {
+    const idx = this.watchlists.findIndex((w) => w.id === id);
+    if (idx === -1) return null;
+    this.watchlists[idx] = {
+      ...this.watchlists[idx],
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    return this.watchlists[idx];
+  }
+
+  public toggleWatchlist(id: string): FaceWatchlistEntry | null {
+    const entry = this.watchlists.find((w) => w.id === id);
+    if (!entry) return null;
+    entry.status = entry.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    entry.updatedAt = new Date().toISOString();
+    return entry;
+  }
+
+  public deleteWatchlist(id: string): boolean {
+    const idx = this.watchlists.findIndex((w) => w.id === id);
+    if (idx === -1) return false;
+    this.watchlists.splice(idx, 1);
+    return true;
   }
 
   /**
@@ -251,7 +283,9 @@ export class FaceMatcher {
     let bestSimilarity = 0;
 
     for (const entry of activeWatchlists) {
-      const entryVector = generateSyntheticEmbedding(entry.faceTemplateId);
+      const entryVector =
+        (entry as any).templateEmbedding ||
+        generateSyntheticEmbedding(entry.faceTemplateId || entry.id || 'seed-default');
       const similarity = computeCosineSimilarity(obsVector, entryVector);
       if (similarity > bestSimilarity) {
         bestSimilarity = similarity;
@@ -260,12 +294,13 @@ export class FaceMatcher {
     }
 
     const roundedSim = Number(bestSimilarity.toFixed(3));
+    const effectiveThreshold = bestMatch ? (bestMatch.threshold ?? 0.82) : 0.82;
 
-    if (bestMatch && roundedSim >= bestMatch.threshold) {
+    if (bestMatch && roundedSim >= effectiveThreshold) {
       return {
         recognitionStatus: 'MATCHED',
         similarityScore: roundedSim,
-        matchingThreshold: bestMatch.threshold,
+        matchingThreshold: effectiveThreshold,
         isWatchlistMatch: true,
         matchedWatchlistEntry: bestMatch,
         embeddingRef,

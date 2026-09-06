@@ -9,7 +9,8 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "tsx src/tracking/verify-tracker.ts && tsx src/spatial/verify-spatial.ts && tsx src/anpr/verify-anpr.ts"
+    "verify:block5": "tsx src/verification/verify-block5-gemini.ts",
+    "test": "tsx src/tracking/verify-tracker.ts && tsx src/spatial/verify-spatial.ts && tsx src/anpr/verify-anpr.ts && tsx src/face/verify-face.ts && tsx src/verification/verify-block3-integrated.ts && tsx src/verification/verify-block5-gemini.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

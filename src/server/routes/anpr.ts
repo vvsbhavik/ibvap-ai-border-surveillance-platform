@@ -263,6 +263,183 @@ anprRouter.get('/search', (req: Request, res: Response) => {
   });
 });
 
+// GET /api/v1/anpr/retention
+// Retention policy telemetry
+anprRouter.get('/retention', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.view')) return;
+
+  const policy = anprService.getRetentionPolicy();
+  res.json({
+    success: true,
+    retention: policy,
+  });
+});
+
+// GET /api/v1/anpr/watchlists
+// ANPR Watchlist listing
+anprRouter.get('/watchlists', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.view')) return;
+
+  const watchlists = anprService.getWatchlists();
+  res.json({
+    success: true,
+    total: watchlists.length,
+    watchlists,
+  });
+});
+
+// POST /api/v1/anpr/watchlists
+// Create ANPR Watchlist entry
+anprRouter.post('/watchlists', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { plateNumber, category, labelName, priority, notes } = req.body;
+
+  if (!plateNumber || !category) {
+    res.status(400).json({
+      success: false,
+      error: 'BAD_REQUEST',
+      message: 'plateNumber and category are required.',
+    });
+    return;
+  }
+
+  const entry = anprService.addWatchlistEntry({
+    plateNumber,
+    category,
+    labelName,
+    priority,
+    notes,
+    active: true,
+  });
+
+  dataStore.logAudit(
+    operator.callsign,
+    'CREATE_ANPR_WATCHLIST',
+    'ANPR',
+    entry.plateNumber,
+    req.ip || '127.0.0.1',
+    { labelName: entry.labelName, category: entry.category },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry,
+  });
+});
+
+// PUT /api/v1/anpr/watchlists/:id
+// Update ANPR Watchlist entry
+anprRouter.put('/watchlists/:id', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const { plateNumber, category, labelName, priority, notes } = req.body;
+
+  const updated = anprService.updateWatchlistEntry(id, {
+    plateNumber,
+    category,
+    labelName,
+    priority,
+    notes,
+  });
+
+  if (!updated) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `ANPR watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'UPDATE_ANPR_WATCHLIST',
+    'ANPR',
+    updated.plateNumber,
+    req.ip || '127.0.0.1',
+    { labelName, category },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry: updated,
+  });
+});
+
+// PATCH /api/v1/anpr/watchlists/:id/toggle
+// Toggle ANPR Watchlist entry
+anprRouter.patch('/watchlists/:id/toggle', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const toggled = anprService.toggleWatchlistEntry(id);
+
+  if (!toggled) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `ANPR watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'TOGGLE_ANPR_WATCHLIST',
+    'ANPR',
+    toggled.plateNumber,
+    req.ip || '127.0.0.1',
+    { active: toggled.active },
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    entry: toggled,
+  });
+});
+
+// DELETE /api/v1/anpr/watchlists/:id
+// Delete ANPR Watchlist entry
+anprRouter.delete('/watchlists/:id', (req: Request, res: Response) => {
+  if (!checkPermission(req, res, 'anpr.manage')) return;
+
+  const operator = getOperatorContext(req);
+  const { id } = req.params;
+  const deleted = anprService.deleteWatchlistEntry(id);
+
+  if (!deleted) {
+    res.status(404).json({
+      success: false,
+      error: 'NOT_FOUND',
+      message: `ANPR watchlist entry ${id} not found.`,
+    });
+    return;
+  }
+
+  dataStore.logAudit(
+    operator.callsign,
+    'DELETE_ANPR_WATCHLIST',
+    'ANPR',
+    id,
+    req.ip || '127.0.0.1',
+    {},
+    'SUCCESS'
+  );
+
+  res.json({
+    success: true,
+    removedId: id,
+  });
+});
+
 // POST /api/v1/anpr/scenarios/:scenarioName
 // Triggers deterministic simulation scenarios on demand
 anprRouter.post('/scenarios/:scenarioName', (req: Request, res: Response) => {
