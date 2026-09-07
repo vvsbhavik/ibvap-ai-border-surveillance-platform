@@ -34,6 +34,7 @@ import { canPerformCameraAction } from '../../utils/permissions';
 import { formatFps, formatLatency, formatTimestamp } from '../../utils/formatters';
 import { api } from '../../api/client';
 import { DecommissionConfirmModal } from './DecommissionConfirmModal';
+import { liveStreamManager, CameraLiveState } from '../../video-gateway/liveStreamManager';
 
 export interface CameraDetailDrawerProps {
   isOpen: boolean;
@@ -82,6 +83,17 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
   const [codec, setCodec] = useState('');
   const [description, setDescription] = useState('');
   const [isPtSupported, setIsPtSupported] = useState(false);
+
+  // Live Stream Abstraction State
+  const [sourceMode, setSourceMode] = useState<'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE'>('SIMULATION');
+  const [sourceType, setSourceType] = useState<'WEBCAM' | 'HLS' | 'WEBRTC' | 'RTSP' | 'SIMULATED'>('SIMULATED');
+  const [sourceAttribution, setSourceAttribution] = useState('');
+  const [browserStreamUrl, setBrowserStreamUrl] = useState('');
+  const [aiProcessingStatus, setAiProcessingStatus] = useState<'READY' | 'STANDBY' | 'UNAVAILABLE' | 'ERROR'>('READY');
+  const [liveState, setLiveState] = useState<CameraLiveState | null>(null);
+  const [isTogglingWebcam, setIsTogglingWebcam] = useState(false);
+  const [streamSwitchNotice, setStreamSwitchNotice] = useState<string | null>(null);
+  const drawerVideoRef = React.useRef<HTMLVideoElement | null>(null);
 
   // AI Analytics status local state
   const [aiAnalytics, setAiAnalytics] = useState<CameraAiAnalyticsConfig>(defaultAnalyticsConfig);
@@ -143,6 +155,25 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
       setCodec(camera.codec || 'H.265');
       setDescription(camera.description || '');
       setIsPtSupported(Boolean(camera.isPtSupported));
+
+      // Live Stream State sync
+      const effMode: 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE' =
+        camera.sourceMode ||
+        (camera.status === 'OFFLINE'
+          ? 'OFFLINE'
+          : camera.status === 'DEGRADED'
+          ? 'UNAVAILABLE'
+          : camera.isSimulated !== false
+          ? 'SIMULATION'
+          : 'LIVE');
+      setSourceMode(effMode);
+      setSourceType(camera.sourceType || (camera.isSimulated !== false ? 'SIMULATED' : 'WEBCAM'));
+      setSourceAttribution(camera.sourceAttribution || '');
+      setBrowserStreamUrl(camera.browserStreamUrl || '');
+      setAiProcessingStatus(camera.aiProcessingStatus || (effMode === 'LIVE' ? 'UNAVAILABLE' : 'READY'));
+      setLiveState(liveStreamManager.getState(camera.id));
+      setStreamSwitchNotice(null);
+
       setAiAnalytics(camera.aiAnalyticsStatus || {
         personDetection: 'NOT_CONFIGURED',
         vehicleDetection: 'NOT_CONFIGURED',
@@ -220,6 +251,26 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
     }
   }, [camera, sectors, isOpen]);
 
+  // Subscribe to live stream manager updates
+  useEffect(() => {
+    if (!camera) return;
+    const unsub = liveStreamManager.subscribe((states) => {
+      const s = states.get(camera.id);
+      if (s) setLiveState(s);
+    });
+    return unsub;
+  }, [camera?.id]);
+
+  // Attach webcam stream to drawer video element when active
+  useEffect(() => {
+    if (drawerVideoRef.current && liveState?.isStreaming && liveState.mediaStream) {
+      if (drawerVideoRef.current.srcObject !== liveState.mediaStream) {
+        drawerVideoRef.current.srcObject = liveState.mediaStream;
+        drawerVideoRef.current.play().catch((err) => console.warn('Drawer video play error:', err));
+      }
+    }
+  }, [liveState?.isStreaming, liveState?.mediaStream]);
+
   if (!camera) return null;
 
   const userRole = currentUser?.role;
@@ -227,6 +278,77 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
   const canEnable = canPerformCameraAction(userRole, 'camera.enable');
   const canDisable = canPerformCameraAction(userRole, 'camera.disable');
   const canDecommission = canPerformCameraAction(userRole, 'camera.decommission');
+
+  const handleSwitchSourceMode = async (newMode: 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE') => {
+    if (!camera) return;
+    setStreamSwitchNotice(null);
+    try {
+      let newType = sourceType;
+      if (newMode === 'SIMULATION' && (sourceType === 'WEBCAM' || sourceType === 'HLS')) {
+        newType = 'SIMULATED';
+        setSourceType('SIMULATED');
+      } else if (newMode === 'LIVE' && sourceType === 'SIMULATED') {
+        newType = 'WEBCAM';
+        setSourceType('WEBCAM');
+      }
+
+      setSourceMode(newMode);
+      const res = await api.video.setSourceMode(camera.id, {
+        sourceMode: newMode,
+        sourceType: newType,
+        sourceAttribution: sourceAttribution.trim() || undefined,
+        browserStreamUrl: browserStreamUrl.trim() || undefined,
+        aiProcessingStatus: newMode === 'LIVE' ? 'UNAVAILABLE' : 'READY',
+      });
+
+      if (newMode !== 'LIVE' && liveState?.isStreaming) {
+        liveStreamManager.stopWebcamStream(camera.id);
+      }
+
+      setStreamSwitchNotice(`Switched stream mode to ${newMode}`);
+      if (onCameraUpdated && res?.camera) {
+        onCameraUpdated(res.camera);
+      }
+    } catch (err: any) {
+      alert(`Failed to switch stream mode: ${err.message}`);
+    }
+  };
+
+  const handleToggleWebcam = async () => {
+    if (!camera) return;
+    setIsTogglingWebcam(true);
+    setStreamSwitchNotice(null);
+    try {
+      if (liveState?.isStreaming) {
+        liveStreamManager.stopWebcamStream(camera.id);
+        const res = await api.video.setSourceMode(camera.id, {
+          sourceMode: 'SIMULATION',
+          sourceType: 'SIMULATED',
+          sourceAttribution: 'Synthetic Border Patrol Feed',
+        });
+        setSourceMode('SIMULATION');
+        setSourceType('SIMULATED');
+        setStreamSwitchNotice('Stopped live webcam. Restored simulated RTSP feed.');
+        if (onCameraUpdated && res?.camera) onCameraUpdated(res.camera);
+      } else {
+        await liveStreamManager.startWebcamStream(camera.id);
+        const res = await api.video.setSourceMode(camera.id, {
+          sourceMode: 'LIVE',
+          sourceType: 'WEBCAM',
+          sourceAttribution: sourceAttribution.trim() || 'Operator Station Live Feed',
+          aiProcessingStatus: 'UNAVAILABLE',
+        });
+        setSourceMode('LIVE');
+        setSourceType('WEBCAM');
+        setStreamSwitchNotice('Live webcam connected! Video frames transmitting to gateway.');
+        if (onCameraUpdated && res?.camera) onCameraUpdated(res.camera);
+      }
+    } catch (err: any) {
+      alert(`Webcam error: ${err.message}`);
+    } finally {
+      setIsTogglingWebcam(false);
+    }
+  };
 
   const handleResetTracker = async () => {
     if (!camera) return;

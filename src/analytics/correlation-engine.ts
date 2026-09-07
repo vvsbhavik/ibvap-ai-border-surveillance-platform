@@ -64,7 +64,7 @@ export class CorrelationEngine {
    */
   public ingestObservation(input: IngestObservationInput): CorrelatedObservation {
     const timestamp = input.timestamp || new Date().toISOString();
-    const camera = dataStore.getCamera(input.cameraId);
+    const camera = dataStore.cameras.find((c) => c.cameraId === input.cameraId || c.identifier === input.cameraId);
     const cameraIdentifier = input.cameraIdentifier || camera?.cameraId || input.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';

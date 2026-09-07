@@ -48,6 +48,18 @@ import {
   FaceQualityState,
   FaceRecognitionStatus,
 } from '../face/types';
+import {
+  CameraGraph,
+  CrossCameraCorrelation,
+  CorrelatedObservation,
+  VehicleMovementReconstruction,
+  PersonMovementReconstruction,
+  RouteAnalysisResult,
+  AdvancedAnalyticsEvent,
+  ObservableRuleConfig,
+  CorrelatedEntityType,
+  CorrelationConfidenceLevel,
+} from '../analytics/types';
 
 const BASE_URL = '/api/v1';
 
@@ -650,6 +662,40 @@ export const api = {
           body: JSON.stringify({ scene }),
         }
       ),
+    submitLiveFrame: (
+      cameraId: string,
+      data: {
+        dataUri: string;
+        width?: number;
+        height?: number;
+        timestamp?: string;
+        metadata?: Record<string, any>;
+      }
+    ) =>
+      fetchJson<{ success: boolean; sequenceNumber: number; timestamp: string; sizeBytes: number }>(
+        `${BASE_URL}/video/streams/${cameraId}/frame`,
+        {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }
+      ),
+    setSourceMode: (
+      cameraId: string,
+      data: {
+        sourceMode: 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE';
+        sourceType?: string;
+        browserStreamUrl?: string;
+        sourceAttribution?: string;
+        aiProcessingStatus?: string;
+      }
+    ) =>
+      fetchJson<{ success: boolean; camera: Camera; telemetry: StreamTelemetry }>(
+        `${BASE_URL}/video/streams/${cameraId}/source-mode`,
+        {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }
+      ),
   },
 
   ai: {
@@ -926,6 +972,119 @@ export const api = {
       fetchJson<{ success: boolean; scenario: string; message: string; result: any }>(
         `${BASE_URL}/faces/scenarios/${scenarioId}`,
         { method: 'POST' }
+      ),
+  },
+
+  analytics: {
+    getGraph: () =>
+      fetchJson<{
+        success: boolean;
+        data: {
+          graph: CameraGraph;
+          stats: {
+            totalNodes: number;
+            totalEdges: number;
+            activeMasts: number;
+            anprEnabledMasts: number;
+            thermalEnabledMasts: number;
+            faceAnalyticsMasts: number;
+            sectorsCovered: string[];
+          };
+          disclaimer: string;
+        };
+      }>(`${BASE_URL}/analytics/graph`),
+    getAdjacentCameras: (cameraId: string) =>
+      fetchJson<{ success: boolean; cameraId: string; neighbors: any[] }>(
+        `${BASE_URL}/analytics/graph/adjacent/${cameraId}`
+      ),
+    getCorrelations: (params?: {
+      entityType?: CorrelatedEntityType;
+      confidenceLevel?: CorrelationConfidenceLevel;
+      cameraId?: string;
+      sectorId?: string;
+      minConfidence?: number;
+      limit?: number;
+    }) => {
+      const qs = new URLSearchParams();
+      if (params?.entityType) qs.set('entityType', params.entityType);
+      if (params?.confidenceLevel) qs.set('confidenceLevel', params.confidenceLevel);
+      if (params?.cameraId) qs.set('cameraId', params.cameraId);
+      if (params?.sectorId) qs.set('sectorId', params.sectorId);
+      if (params?.minConfidence) qs.set('minConfidence', String(params.minConfidence));
+      if (params?.limit) qs.set('limit', String(params.limit));
+      return fetchJson<{
+        success: boolean;
+        total: number;
+        data: CrossCameraCorrelation[];
+        disclaimer: string;
+      }>(`${BASE_URL}/analytics/correlations?${qs.toString()}`);
+    },
+    getCorrelationById: (id: string) =>
+      fetchJson<{ success: boolean; data: CrossCameraCorrelation }>(
+        `${BASE_URL}/analytics/correlations/${id}`
+      ),
+    getObservations: (params?: { cameraId?: string; entityType?: CorrelatedEntityType; trackId?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.cameraId) qs.set('cameraId', params.cameraId);
+      if (params?.entityType) qs.set('entityType', params.entityType);
+      if (params?.trackId) qs.set('trackId', params.trackId);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      return fetchJson<{ success: boolean; total: number; data: CorrelatedObservation[] }>(
+        `${BASE_URL}/analytics/observations?${qs.toString()}`
+      );
+    },
+    reconstructVehicle: (params: { plateNumber?: string; trackId?: string; startTime?: string; endTime?: string }) => {
+      const qs = new URLSearchParams();
+      if (params.plateNumber) qs.set('plateNumber', params.plateNumber);
+      if (params.trackId) qs.set('trackId', params.trackId);
+      if (params.startTime) qs.set('startTime', params.startTime);
+      if (params.endTime) qs.set('endTime', params.endTime);
+      return fetchJson<{ success: boolean; data: VehicleMovementReconstruction }>(
+        `${BASE_URL}/analytics/reconstruction/vehicle?${qs.toString()}`
+      );
+    },
+    reconstructPerson: (params: { trackId?: string; faceObservationId?: string; startTime?: string; endTime?: string }) => {
+      const qs = new URLSearchParams();
+      if (params.trackId) qs.set('trackId', params.trackId);
+      if (params.faceObservationId) qs.set('faceObservationId', params.faceObservationId);
+      if (params.startTime) qs.set('startTime', params.startTime);
+      if (params.endTime) qs.set('endTime', params.endTime);
+      return fetchJson<{ success: boolean; data: PersonMovementReconstruction }>(
+        `${BASE_URL}/analytics/reconstruction/person?${qs.toString()}`
+      );
+    },
+    analyzeRoute: (params: { cameras: string[]; entityType?: CorrelatedEntityType; entityId?: string; timestamps?: string[] }) => {
+      const qs = new URLSearchParams();
+      qs.set('cameras', params.cameras.join(','));
+      if (params.entityType) qs.set('entityType', params.entityType);
+      if (params.entityId) qs.set('entityId', params.entityId);
+      if (params.timestamps) qs.set('timestamps', params.timestamps.join(','));
+      return fetchJson<{ success: boolean; data: RouteAnalysisResult }>(
+        `${BASE_URL}/analytics/route-analysis?${qs.toString()}`
+      );
+    },
+    getEvents: (params?: { eventType?: string; cameraId?: string; severity?: string; trackId?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.eventType) qs.set('eventType', params.eventType);
+      if (params?.cameraId) qs.set('cameraId', params.cameraId);
+      if (params?.severity) qs.set('severity', params.severity);
+      if (params?.trackId) qs.set('trackId', params.trackId);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      return fetchJson<{ success: boolean; total: number; data: AdvancedAnalyticsEvent[] }>(
+        `${BASE_URL}/analytics/events?${qs.toString()}`
+      );
+    },
+    getConfig: () =>
+      fetchJson<{ success: boolean; data: ObservableRuleConfig }>(`${BASE_URL}/analytics/config`),
+    updateConfig: (patch: Partial<ObservableRuleConfig>) =>
+      fetchJson<{ success: boolean; message: string; data: ObservableRuleConfig }>(
+        `${BASE_URL}/analytics/config`,
+        { method: 'POST', body: JSON.stringify(patch) }
+      ),
+    simulateScenario: (scenarioType: string, cameraId?: string, trackId?: string) =>
+      fetchJson<{ success: boolean; message: string; data: AdvancedAnalyticsEvent }>(
+        `${BASE_URL}/analytics/simulate`,
+        { method: 'POST', body: JSON.stringify({ scenarioType, cameraId, trackId }) }
       ),
   },
 };

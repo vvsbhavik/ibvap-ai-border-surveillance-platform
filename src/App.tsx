@@ -33,6 +33,7 @@ import { EvidenceScreen } from './screens/EvidenceScreen';
 import { GisScreen } from './screens/GisScreen';
 import { AnprScreen } from './screens/AnprScreen';
 import { FacesScreen } from './screens/FacesScreen';
+import { AnalyticsScreen } from './screens/AnalyticsScreen';
 import { WatchlistsScreen } from './screens/WatchlistsScreen';
 import { CopilotScreen } from './screens/CopilotScreen';
 import { HealthScreen } from './screens/HealthScreen';
@@ -572,6 +573,25 @@ export function App() {
                         `alt-face-${rec.personTrackId}`,
                         `Biometric Watchlist Hit - ${rec.watchlistDisplayName || 'Subject of Interest'}`,
                         `Positive biometric match for ${rec.watchlistDisplayName} on Person Track ${rec.personTrackId} (Confidence: ${(((rec.similarityScore ?? 0.9)) * 100).toFixed(1)}%) in ${rec.spatialContext?.sectorName || 'Sector Bravo'}`
+                      );
+                    }}
+                  />
+                )}
+
+                {currentScreen === 'analytics' && (
+                  <AnalyticsScreen
+                    onEscalateCorrelation={(corr) => {
+                      handleEscalateAlert(
+                        `alt-corr-${corr.correlationId}`,
+                        `Cross-Camera Correlation Alert: ${corr.entityType} ${corr.relatedANPRObservation?.plateNumber || corr.sourceTrackId}`,
+                        `Correlated trajectory across cameras ${corr.involvedCameras.join(' -> ')} in sectors ${corr.involvedSectors.join(', ')} with ${Math.round(corr.confidenceScore * 100)}% multi-factor confidence.`
+                      );
+                    }}
+                    onEscalateEvent={(evt) => {
+                      handleEscalateAlert(
+                        `alt-aev-${evt.eventId}`,
+                        `Observable Border Rule Violation: ${evt.ruleName}`,
+                        `${evt.triggerReason} on Camera ${evt.cameraIdentifier} (${evt.sectorName}). Track: ${evt.trackId || 'N/A'}. Severity: ${evt.severity}.`
                       );
                     }}
                   />

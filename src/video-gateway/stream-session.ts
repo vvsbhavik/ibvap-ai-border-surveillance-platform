@@ -1,6 +1,9 @@
 import { CircularFrameBuffer } from './frame-buffer';
 import { SyntheticFrameGenerator } from './synthetic-feed';
 import {
+  AiProcessingStatus,
+  CameraSourceMode,
+  CameraSourceType,
   RawFrame,
   ReconnectPolicy,
   StreamConnectionState,
@@ -24,6 +27,11 @@ export interface StreamSessionConfig {
   azimuth?: number;
   isSimulated?: boolean;
   testScene?: SyntheticTestScene;
+  sourceMode?: CameraSourceMode;
+  sourceType?: CameraSourceType;
+  browserStreamUrl?: string;
+  sourceAttribution?: string;
+  aiProcessingStatus?: AiProcessingStatus;
 }
 
 const DEFAULT_RECONNECT_POLICY: ReconnectPolicy = {
@@ -43,6 +51,13 @@ export class StreamSession {
   private healthState: StreamHealthState = 'UNKNOWN';
   private failureMode: StreamFailureMode = 'NONE';
   private testScene: SyntheticTestScene;
+
+  // Live Stream Abstraction
+  private sourceMode: CameraSourceMode = 'SIMULATION';
+  private sourceType: CameraSourceType = 'SIMULATED';
+  private browserStreamUrl?: string;
+  private sourceAttribution?: string;
+  private aiProcessingStatus: AiProcessingStatus = 'READY';
 
   private framesAcquiredTotal: number = 0;
   private framesDroppedTotal: number = 0;
@@ -66,11 +81,121 @@ export class StreamSession {
     this.frameBuffer = new CircularFrameBuffer(30);
     this.frameGenerator = new SyntheticFrameGenerator();
     this.testScene = config.testScene || (config.cameraId === 'CAM-01' || config.identifier === 'CAM-01' ? 'PERSON_SOLITARY' : 'EMPTY');
+
+    // Initialize source mode and type from config
+    this.sourceMode = config.sourceMode || (config.isSimulated === false ? 'LIVE' : 'SIMULATION');
+    this.sourceType =
+      config.sourceType ||
+      (this.sourceMode === 'LIVE'
+        ? config.protocol === 'WEBCAM'
+          ? 'WEBCAM'
+          : config.protocol === 'HLS'
+          ? 'HLS'
+          : config.protocol === 'WEBRTC'
+          ? 'WEBRTC'
+          : 'RTSP'
+        : 'SIMULATED');
+    this.browserStreamUrl = config.browserStreamUrl;
+    this.sourceAttribution = config.sourceAttribution || (this.sourceMode === 'LIVE' ? 'Authorized Ingestion Stream' : 'Synthetic Border Simulation');
+    this.aiProcessingStatus =
+      config.aiProcessingStatus ||
+      (this.sourceMode === 'LIVE'
+        ? this.sourceType === 'WEBCAM'
+          ? 'READY'
+          : 'UNAVAILABLE'
+        : 'READY');
   }
 
   public setTestScene(scene: SyntheticTestScene): void {
     this.testScene = scene;
     this.notifyTelemetry();
+  }
+
+  /**
+   * Sets the stream source mode (LIVE vs SIMULATION vs OFFLINE vs UNAVAILABLE).
+   */
+  public setSourceMode(
+    mode: CameraSourceMode,
+    details?: {
+      sourceType?: CameraSourceType;
+      browserStreamUrl?: string;
+      sourceAttribution?: string;
+      aiProcessingStatus?: AiProcessingStatus;
+    }
+  ): void {
+    this.sourceMode = mode;
+    if (details?.sourceType) this.sourceType = details.sourceType;
+    if (details?.browserStreamUrl !== undefined) this.browserStreamUrl = details.browserStreamUrl;
+    if (details?.sourceAttribution !== undefined) this.sourceAttribution = details.sourceAttribution;
+    if (details?.aiProcessingStatus !== undefined) {
+      this.aiProcessingStatus = details.aiProcessingStatus;
+    } else {
+      this.aiProcessingStatus = mode === 'LIVE' ? (this.sourceType === 'WEBCAM' ? 'READY' : 'UNAVAILABLE') : 'READY';
+    }
+
+    if (mode === 'OFFLINE') {
+      this.disconnect('Stream transitioned to OFFLINE mode');
+    } else if (mode === 'UNAVAILABLE') {
+      this.disconnect('Stream source is UNAVAILABLE');
+      this.setConnectionState('ERROR');
+      this.setHealthState('OFFLINE');
+    } else if (mode === 'LIVE') {
+      if (this.connectionState === 'DISCONNECTED') {
+        this.connect().catch(() => {});
+      }
+    } else if (mode === 'SIMULATION') {
+      if (this.connectionState === 'DISCONNECTED') {
+        this.connect().catch(() => {});
+      } else {
+        this.startFrameAcquisition();
+      }
+    }
+
+    this.notifyTelemetry();
+  }
+
+  /**
+   * Accepts and buffers an actual live frame captured from a client webcam or media stream.
+   * Feeds the raw frame into circular frame buffer for display and AI analytics.
+   */
+  public submitLiveFrame(frameData: {
+    dataUri: string;
+    width?: number;
+    height?: number;
+    timestamp?: string;
+    metadata?: Record<string, any>;
+  }): RawFrame {
+    const timestamp = frameData.timestamp || new Date().toISOString();
+    this.framesAcquiredTotal++;
+    const frame: RawFrame = {
+      cameraId: this.config.cameraId,
+      timestamp,
+      sequenceNumber: this.framesAcquiredTotal,
+      width: frameData.width || 1280,
+      height: frameData.height || 720,
+      format: 'jpeg',
+      dataUri: frameData.dataUri,
+      sizeBytes: Math.round((frameData.dataUri?.length || 0) * 0.75),
+      isSynthetic: false,
+      metadata: {
+        cameraName: this.config.name,
+        sectorName: this.config.sectorName,
+        fps: this.config.fps || 30,
+        latencyMs: this.measuredLatencyMs || 25,
+        ...frameData.metadata,
+      },
+    };
+
+    this.frameBuffer.push(frame);
+    this.lastHeartbeatAt = timestamp;
+    if (this.connectionState !== 'CONNECTED') {
+      this.setConnectionState('CONNECTED');
+    }
+    if (this.healthState !== 'HEALTHY') {
+      this.setHealthState('HEALTHY');
+    }
+    this.onFrameAcquired?.(frame);
+    return frame;
   }
 
   /**
@@ -373,7 +498,12 @@ export class StreamSession {
       protocol: this.config.protocol,
       codec: this.config.codec,
       resolution: this.config.resolution,
-      isSimulated: Boolean(this.config.isSimulated),
+      isSimulated: this.sourceMode === 'SIMULATION',
+      sourceMode: this.sourceMode,
+      sourceType: this.sourceType,
+      browserStreamUrl: this.browserStreamUrl,
+      sourceAttribution: this.sourceAttribution,
+      aiProcessingStatus: this.aiProcessingStatus,
       failureMode: this.failureMode,
       testScene: this.testScene,
     };

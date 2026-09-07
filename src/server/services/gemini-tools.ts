@@ -17,6 +17,11 @@ import { trackingService } from '../../tracking/tracking-service';
 import { spatialEngine } from '../../spatial/spatial-engine';
 import { anprService } from '../../anpr/anpr-service';
 import { faceService } from '../../face/face-service';
+import { cameraTrustEngine } from '../../camera-trust/trust-engine';
+import { gisService } from '../../gis/gis-service';
+import { digitalTwinService } from '../../simulation/digital-twin-service';
+import { edgeNodeService } from '../../edge/edge-service';
+import { cameraGraphManager } from '../../analytics/camera-graph';
 import { OperatorAuthContext, ToolInvocationRecord } from './gemini-types';
 import { PermissionKey } from '../types';
 
@@ -38,6 +43,11 @@ export const TOOL_PERMISSIONS: Record<string, PermissionKey> = {
   getZoneOccupancy: 'gis.view',
   getWatchlistMatch: 'watchlist.view',
   getEvidenceMetadata: 'evidence.view',
+  getCameraTrustStatus: 'camera.view',
+  getCameraTopology: 'gis.view',
+  getSectorMapContext: 'gis.view',
+  getSimulationState: 'gis.view',
+  getEdgeNodeStatus: 'system_health.view',
 };
 
 /**
@@ -201,6 +211,55 @@ export const IBVAP_FUNCTION_DECLARATIONS = [
       properties: {
         evidenceId: { type: Type.STRING, description: 'Optional evidence ID' },
         incidentId: { type: Type.STRING, description: 'Optional incident ID or incident number' },
+      },
+    },
+  },
+  {
+    name: 'getCameraTrustStatus',
+    description: 'Retrieves explainable camera trust scores (0-100), operational integrity status, and measurable telemetry (stream state, frame age, reconnects). Never returns arbitrary or simulated hype.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        cameraId: { type: Type.STRING, description: 'Camera identifier (e.g. CAM-01, CAM-02)' },
+      },
+      required: ['cameraId'],
+    },
+  },
+  {
+    name: 'getCameraTopology',
+    description: 'Retrieves physical surveillance topology corridors, expected transit directions, and inter-camera travel time thresholds.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        sectorId: { type: Type.STRING, description: 'Optional sector ID filter (e.g. sec-bravo)' },
+      },
+    },
+  },
+  {
+    name: 'getSectorMapContext',
+    description: 'Retrieves GIS geospatial coordinates, sectors, spatial zones, virtual fences, and active geographic incidents.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        sectorId: { type: Type.STRING, description: 'Optional sector filter' },
+      },
+    },
+  },
+  {
+    name: 'getSimulationState',
+    description: 'Retrieves the digital twin simulation environment status, active scenario definition, active simulated actors, and provenance stamp.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {},
+    },
+  },
+  {
+    name: 'getEdgeNodeStatus',
+    description: 'Retrieves forward edge compute gateways, offline queue status, buffered event counts, and network connectivity states.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        edgeNodeId: { type: Type.STRING, description: 'Optional edge node ID (e.g. EDGE-NODE-NORTH-01)' },
       },
     },
   },
@@ -608,6 +667,109 @@ export async function executeTool(
           })),
           provenance: 'SIMULATION',
         };
+        break;
+      }
+
+      case 'getCameraTrustStatus': {
+        const { cameraId } = args;
+        const cam = dataStore.getCamera(cameraId);
+        if (!cam) {
+          output = { error: 'NOT_FOUND', message: `Camera '${cameraId}' not found.` };
+        } else {
+          const evalRes = cameraTrustEngine.getEvaluation(cam.cameraId);
+          output = {
+            cameraId: cam.cameraId,
+            cameraIdentifier: cam.identifier || cam.cameraId,
+            status: evalRes.status,
+            statusLabel: evalRes.statusLabel,
+            trustScore: evalRes.trustScore,
+            trustLevel: evalRes.trustLevel,
+            factors: evalRes.factors,
+            measurableTelemetry: evalRes.measurableTelemetry,
+            activeAnomalies: evalRes.activeAnomalies,
+            provenance: 'SIMULATION',
+          };
+        }
+        break;
+      }
+
+      case 'getCameraTopology': {
+        const { sectorId } = args;
+        const corridors = cameraGraphManager.getCorridors();
+        const filtered = sectorId
+          ? corridors.filter((c) => {
+              const fromCam = dataStore.getCamera(c.fromCameraId);
+              return fromCam?.sectorId === sectorId;
+            })
+          : corridors;
+        output = {
+          count: filtered.length,
+          corridors: filtered,
+          provenance: 'SIMULATION',
+        };
+        break;
+      }
+
+      case 'getSectorMapContext': {
+        const context = gisService.getOperationalContext();
+        output = {
+          timestamp: context.timestamp,
+          provenance: context.provenanceLabel,
+          sectorsCount: context.sectors.length,
+          camerasCount: context.cameras.length,
+          zonesCount: context.zones.length,
+          fencesCount: context.fences.length,
+          activeIncidentsCount: context.incidents.length,
+          highPriorityAlertsCount: context.summary.highPriorityAlerts,
+          summary: context.summary,
+        };
+        break;
+      }
+
+      case 'getSimulationState': {
+        const simState = digitalTwinService.getState();
+        output = {
+          status: simState.status,
+          activeScenario: simState.activeScenario
+            ? {
+                id: simState.activeScenario.id,
+                code: simState.activeScenario.code,
+                name: simState.activeScenario.name,
+                category: simState.activeScenario.category,
+                primaryEntityType: simState.activeScenario.primaryEntityType,
+              }
+            : null,
+          speedMultiplier: simState.speedMultiplier,
+          elapsedSeconds: simState.elapsedSeconds,
+          activeActorsCount: simState.activeActors.length,
+          provenance: simState.provenanceLabel,
+        };
+        break;
+      }
+
+      case 'getEdgeNodeStatus': {
+        const { edgeNodeId } = args;
+        if (edgeNodeId) {
+          const node = edgeNodeService.getNode(edgeNodeId);
+          output = node
+            ? { ...node, provenance: node.provenanceLabel }
+            : { error: 'NOT_FOUND', message: `Edge node '${edgeNodeId}' not found.` };
+        } else {
+          const nodes = edgeNodeService.getAllNodes();
+          output = {
+            count: nodes.length,
+            nodes: nodes.map((n) => ({
+              edgeNodeId: n.edgeNodeId,
+              name: n.name,
+              sectorName: n.sectorName,
+              connectivityState: n.connectivityState,
+              localProcessingState: n.localProcessingState,
+              queueLength: n.bufferState.queueLength,
+              droppedEventsCount: n.bufferState.droppedEventsCount,
+              provenance: n.provenanceLabel,
+            })),
+          };
+        }
         break;
       }
 

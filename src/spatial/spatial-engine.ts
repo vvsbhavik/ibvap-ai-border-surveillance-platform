@@ -638,6 +638,17 @@ export class SpatialEngine {
   }
 
   /**
+   * Reset spatial tracking state for a specific camera.
+   */
+  public resetCameraState(cameraId: string): void {
+    for (const [trackId, state] of this.trackStates.entries()) {
+      if (state.cameraId === cameraId) {
+        this.trackStates.delete(trackId);
+      }
+    }
+  }
+
+  /**
    * Clear all spatial tracking states.
    */
   public resetAll(): void {

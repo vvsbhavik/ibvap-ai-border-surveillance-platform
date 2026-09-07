@@ -336,7 +336,8 @@ export const CANONICAL_ROLE_MAP: Record<string, UserRole> = {
 
 export function canonicalRole(role?: string): UserRole {
   if (!role) return 'SURVEILLANCE_OPERATOR';
-  return CANONICAL_ROLE_MAP[role] || (role as UserRole);
+  const upper = role.toUpperCase().trim();
+  return CANONICAL_ROLE_MAP[upper] || (upper as UserRole);
 }
 
 export const DEFAULT_ROLE_DEFINITIONS: RoleDefinition[] = [

@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "verify:block5": "tsx src/verification/verify-block5-gemini.ts",
-    "test": "tsx src/tracking/verify-tracker.ts && tsx src/spatial/verify-spatial.ts && tsx src/anpr/verify-anpr.ts && tsx src/face/verify-face.ts && tsx src/verification/verify-block3-integrated.ts && tsx src/verification/verify-block5-gemini.ts"
+    "verify:block7": "tsx src/verification/verify-block7-gis-simulation.ts",
+    "verify:block8": "tsx src/verification/verify-block8-production.ts",
+    "test": "tsx src/tracking/verify-tracker.ts && tsx src/spatial/verify-spatial.ts && tsx src/anpr/verify-anpr.ts && tsx src/face/verify-face.ts && tsx src/verification/verify-block3-integrated.ts && tsx src/verification/verify-block7-gis-simulation.ts && tsx src/verification/verify-block8-production.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -21,13 +23,21 @@
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "pg": "^8.23.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "sharp": "^0.33.5",
     "vite": "^6.2.3"
+  },
+  "overrides": {
+    "@xenova/transformers": {
+      "sharp": "$sharp"
+    }
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@types/sharp": "^0.32.0",

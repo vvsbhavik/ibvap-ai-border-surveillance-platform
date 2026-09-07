@@ -330,6 +330,10 @@ class CameraGraphManager {
     return this.graph.edges;
   }
 
+  public getCorridors(): CameraGraphEdge[] {
+    return this.graph.edges;
+  }
+
   public getNode(cameraId: string): CameraGraphNode | undefined {
     return this.graph.nodes.find((n) => n.cameraId === cameraId);
   }

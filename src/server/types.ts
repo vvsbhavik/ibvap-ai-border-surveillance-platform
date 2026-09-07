@@ -130,7 +130,11 @@ export type CameraType =
   | 'RADAR_SLAVED_PTZ' 
   | 'ANPR_SPECIALIZED';
 
-export type CameraProtocol = 'RTSP' | 'ONVIF';
+export type CameraProtocol = 'RTSP' | 'ONVIF' | 'HLS' | 'WEBRTC' | 'WEBCAM' | 'SIMULATED';
+
+export type CameraSourceMode = 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE';
+export type CameraSourceType = 'WEBCAM' | 'HLS' | 'WEBRTC' | 'RTSP' | 'RTSPS' | 'SIMULATED';
+export type AiProcessingStatus = 'READY' | 'DEGRADED' | 'UNAVAILABLE' | 'STANDBY';
 
 export type AiCapabilityStatus = 'NOT_CONFIGURED' | 'CONFIGURED' | 'ACTIVE' | 'DISABLED';
 
@@ -177,6 +181,14 @@ export interface Camera {
   description: string;
   createdAt: string;
   updatedAt: string;
+
+  // Live Source Abstraction & Provenance
+  sourceMode?: CameraSourceMode;
+  sourceType?: CameraSourceType;
+  browserStreamUrl?: string; // Direct browser stream URL (e.g. HLS or video stream)
+  sourceAttribution?: string; // Authorized source attribution / license note
+  aiProcessingStatus?: AiProcessingStatus; // Honest AI status (READY, UNAVAILABLE, DEGRADED, STANDBY)
+  lastFrameTimestamp?: string;
 
   // Lifecycle & Decommissioning
   isDecommissioned?: boolean;
@@ -255,6 +267,8 @@ export interface Alert {
   zoneId?: string;
   zoneName?: string;
   timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
   detectedAt?: string;
   confidenceScore: number;
   reasoningFactors: AlertReasoningFactor[];
@@ -263,6 +277,7 @@ export interface Alert {
   escalatedToIncidentId?: string;
   thumbnailUrl?: string;
   isSimulation?: boolean;
+  isSimulated?: boolean;
 }
 
 export type IncidentStatus = 'OPEN' | 'INVESTIGATING' | 'CONTAINED' | 'RESOLVED' | 'CLOSED';
@@ -303,14 +318,28 @@ export interface EvidenceItem {
   cameraId: string;
   cameraIdentifier: string;
   title: string;
-  mediaType: 'VIDEO_CLIP' | 'HIGH_RES_STILL' | 'ANPR_CROP' | 'TELEMETRY_DUMP';
+  mediaType:
+    | 'VIDEO_CLIP'
+    | 'HIGH_RES_STILL'
+    | 'ANPR_CROP'
+    | 'TELEMETRY_DUMP'
+    | 'SNAPSHOT_IMAGE'
+    | 'FACE_CROP'
+    | 'TELEMETRY_LOG';
   fileSizeBytes: number;
   sha256Checksum: string;
   capturedStartAt: string;
   capturedEndAt: string;
+  trackId?: string;
   isVerified: boolean;
   chainOfCustodyCount: number;
   previewUrl?: string;
+  storageReferenceUri?: string;
+  isSimulated?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  operatorCallsign?: string;
+  createdByCallsign?: string;
 }
 
 export interface AnprRecord {

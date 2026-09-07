@@ -21,6 +21,15 @@ import { aiRouter } from './src/server/routes/ai';
 import { tracksRouter } from './src/server/routes/tracks';
 import { trackingRouter } from './src/server/routes/tracking';
 import { facesRouter } from './src/server/routes/faces';
+import { analyticsRouter } from './src/server/routes/analytics';
+import { gisRouter } from './src/server/routes/gis';
+import { cameraTrustRouter } from './src/server/routes/camera-trust';
+import { simulationRouter } from './src/server/routes/simulation';
+import { edgeRouter } from './src/server/routes/edge';
+import { metricsRouter } from './src/server/routes/metrics';
+import { securityHeaders, centralizedErrorHandler } from './src/server/middleware/security';
+import { appConfig, validateConfig } from './src/config/app-config';
+import { persistenceManager } from './src/storage/db-adapter';
 import { videoGateway } from './src/video-gateway/video-gateway';
 import { aiInferenceService } from './src/ai-inference/inference-service';
 import { trackingService } from './src/tracking/tracking-service';
@@ -33,17 +42,12 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Basic security headers
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('X-DNS-Prefetch-Control', 'off');
-    next();
-  });
+  // Enterprise security headers
+  app.use(securityHeaders);
 
-  // Body parsers
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  // Body parsers - allow up to 15mb for live video frames and base64 canvas ingestion
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
   // Request logger middleware
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -84,6 +88,12 @@ async function startServer() {
   apiRouter.use('/tracks', tracksRouter);
   apiRouter.use('/tracking', trackingRouter);
   apiRouter.use('/faces', facesRouter);
+  apiRouter.use('/analytics', analyticsRouter);
+  apiRouter.use('/gis', gisRouter);
+  apiRouter.use('/camera-trust', cameraTrustRouter);
+  apiRouter.use('/simulation', simulationRouter);
+  apiRouter.use('/edge', edgeRouter);
+  apiRouter.use('/metrics', metricsRouter);
 
   // Hook Video Gateway real-time telemetry events to IBVAP DataStore and SSE event bus
   videoGateway.addEventListener((event) => {
@@ -704,7 +714,25 @@ async function startServer() {
     }
   });
 
+  apiRouter.use(centralizedErrorHandler);
   app.use('/api/v1', apiRouter);
+
+  // Validate operating profile & configuration
+  const configValidation = validateConfig(appConfig);
+  if (!configValidation.isValid) {
+    logger.error(`[Config] Configuration errors in profile ${appConfig.profile}:`, {
+      errors: configValidation.errors,
+    });
+    if (appConfig.profile === 'PRODUCTION') {
+      throw new Error(`Production configuration validation failed: ${configValidation.errors.join('; ')}`);
+    }
+  }
+  for (const warn of configValidation.warnings) {
+    logger.info(warn);
+  }
+
+  // Initialize persistence layer
+  await persistenceManager.initialize();
 
   // 3. Frontend Serving
   if (process.env.NODE_ENV !== 'production') {
@@ -722,7 +750,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', async () => {
-    logger.info(`IBVAP Command-and-Control Server listening on http://0.0.0.0:${PORT}`);
+    logger.info(`IBVAP Command-and-Control Server [PROFILE: ${appConfig.profile}] listening on http://0.0.0.0:${PORT}`);
 
     // Initialize Video Gateway stream sessions for registered cameras
     try {

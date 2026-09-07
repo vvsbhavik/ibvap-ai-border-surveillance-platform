@@ -3,6 +3,10 @@
  * Strict separation of concerns, credential safety, and bounded memory design.
  */
 
+export type CameraSourceMode = 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE';
+export type CameraSourceType = 'WEBCAM' | 'HLS' | 'WEBRTC' | 'RTSP' | 'RTSPS' | 'SIMULATED';
+export type AiProcessingStatus = 'READY' | 'DEGRADED' | 'UNAVAILABLE' | 'STANDBY';
+
 export type StreamConnectionState =
   | 'CONFIGURED'
   | 'CONNECTING'
@@ -96,6 +100,11 @@ export interface StreamTelemetry {
   codec: string;
   resolution: string;
   isSimulated: boolean;
+  sourceMode: CameraSourceMode;
+  sourceType: CameraSourceType;
+  browserStreamUrl?: string;
+  sourceAttribution?: string;
+  aiProcessingStatus: AiProcessingStatus;
   failureMode: StreamFailureMode;
   testScene?: SyntheticTestScene;
 }
@@ -115,6 +124,9 @@ export interface ConnectionTestResult {
   latencyMs?: number;
   detectedCodec?: string;
   detectedResolution?: string;
+  firstFrameReceived?: boolean;
+  frameFreshnessMs?: number;
+  streamFormat?: string;
   timestamp: string;
 }
 

@@ -326,6 +326,14 @@ class DataStore {
   // In-memory spatial events history
   spatialEvents: SpatialEvent[] = [];
 
+  get events(): SpatialEvent[] {
+    return this.spatialEvents;
+  }
+
+  set events(evts: SpatialEvent[]) {
+    this.spatialEvents = evts;
+  }
+
   cameras: Camera[] = [
     {
       id: 'cam-01',
@@ -2273,6 +2281,10 @@ class DataStore {
       list = list.slice(0, filter.limit);
     }
     return list;
+  }
+
+  getCamera(id: string): Camera | undefined {
+    return this.cameras.find((c) => c.id === id || c.cameraId === id || c.identifier === id);
   }
 }
 

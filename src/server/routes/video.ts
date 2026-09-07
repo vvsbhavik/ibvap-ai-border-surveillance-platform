@@ -2,7 +2,14 @@ import { Router, Request, Response } from 'express';
 import { videoGateway } from '../../video-gateway/video-gateway';
 import { dataStore } from '../store';
 import { logger } from '../logger';
-import { StreamFailureMode } from '../../video-gateway/types';
+import {
+  AiProcessingStatus,
+  CameraSourceMode,
+  CameraSourceType,
+  StreamFailureMode,
+} from '../../video-gateway/types';
+import { trackingService } from '../../tracking/tracking-service';
+import { spatialEngine } from '../../spatial/spatial-engine';
 
 export const videoRouter = Router();
 
@@ -357,6 +364,159 @@ videoRouter.post('/streams/:cameraId/test-scene', (req: Request, res: Response) 
     message: `Test scene changed to: ${scene}`,
     cameraId,
     scene,
+  });
+});
+
+/**
+ * POST /api/v1/video/streams/:cameraId/frame
+ * Ingests an actual live video frame captured from the operator's browser/webcam.
+ */
+videoRouter.post('/streams/:cameraId/frame', (req: Request, res: Response) => {
+  const { cameraId } = req.params;
+  const { dataUri, width, height, timestamp, metadata } = req.body || {};
+
+  if (!dataUri || typeof dataUri !== 'string') {
+    res.status(400).json({ error: 'Missing or invalid dataUri string' });
+    return;
+  }
+
+  const frame = videoGateway.submitLiveFrame(cameraId, {
+    dataUri,
+    width: width || 1280,
+    height: height || 720,
+    timestamp: timestamp || new Date().toISOString(),
+    metadata,
+  });
+
+  if (!frame) {
+    res.status(404).json({ error: `Camera stream ${cameraId} not found` });
+    return;
+  }
+
+  // Update in-memory camera state
+  const cam = dataStore.cameras.find((c) => c.id === cameraId || c.cameraId === cameraId);
+  if (cam) {
+    cam.lastFrameTimestamp = frame.timestamp;
+    if (cam.status === 'OFFLINE' || cam.status === 'DEGRADED') {
+      cam.status = 'ONLINE';
+    }
+  }
+
+  res.json({
+    success: true,
+    sequenceNumber: frame.sequenceNumber,
+    timestamp: frame.timestamp,
+    sizeBytes: frame.sizeBytes,
+  });
+});
+
+/**
+ * POST /api/v1/video/streams/:cameraId/source-mode
+ * Transitions stream between LIVE, SIMULATION, OFFLINE, and UNAVAILABLE.
+ * Resets transient tracker and spatial states when switching modes.
+ */
+videoRouter.post('/streams/:cameraId/source-mode', (req: Request, res: Response) => {
+  const operator = getOperatorContext(req);
+  if (!dataStore.hasPermission(operator.role, 'camera.update')) {
+    res.status(403).json({
+      error: 'Access denied: missing camera.update permission',
+      requiredPermission: 'camera.update',
+    });
+    return;
+  }
+
+  const { cameraId } = req.params;
+  const { sourceMode, sourceType, browserStreamUrl, sourceAttribution, aiProcessingStatus } = req.body as {
+    sourceMode: CameraSourceMode;
+    sourceType?: CameraSourceType;
+    browserStreamUrl?: string;
+    sourceAttribution?: string;
+    aiProcessingStatus?: AiProcessingStatus;
+  };
+
+  const validModes: CameraSourceMode[] = ['LIVE', 'SIMULATION', 'OFFLINE', 'UNAVAILABLE'];
+  if (!validModes.includes(sourceMode)) {
+    res.status(400).json({
+      error: `Invalid sourceMode. Allowed: ${validModes.join(', ')}`,
+    });
+    return;
+  }
+
+  const cam = dataStore.cameras.find((c) => c.id === cameraId || c.cameraId === cameraId);
+  if (!cam) {
+    res.status(404).json({ error: `Camera ${cameraId} not found` });
+    return;
+  }
+
+  const previousMode = cam.sourceMode || (cam.isSimulated ? 'SIMULATION' : 'LIVE');
+
+  // Reset transient tracking and spatial states on mode transition
+  try {
+    trackingService.resetCamera(cam.id);
+    if (cam.cameraId && cam.cameraId !== cam.id) {
+      trackingService.resetCamera(cam.cameraId);
+    }
+    spatialEngine.resetCameraState(cam.id);
+    if (cam.cameraId && cam.cameraId !== cam.id) {
+      spatialEngine.resetCameraState(cam.cameraId);
+    }
+  } catch (err) {
+    logger.warn(`Failed to reset state for camera ${cameraId}: ${err}`);
+  }
+
+  // Update camera record
+  cam.sourceMode = sourceMode;
+  cam.isSimulated = sourceMode === 'SIMULATION';
+  if (sourceType) cam.sourceType = sourceType;
+  if (browserStreamUrl !== undefined) cam.browserStreamUrl = browserStreamUrl;
+  if (sourceAttribution !== undefined) cam.sourceAttribution = sourceAttribution;
+
+  // AI Analytics status: never fake AI detections on live video unless live model inference is running!
+  if (aiProcessingStatus) {
+    cam.aiProcessingStatus = aiProcessingStatus;
+  } else {
+    cam.aiProcessingStatus = sourceMode === 'LIVE' ? (cam.sourceType === 'WEBCAM' ? 'READY' : 'UNAVAILABLE') : 'READY';
+  }
+
+  if (sourceMode === 'OFFLINE') {
+    cam.status = 'OFFLINE';
+  } else if (sourceMode === 'UNAVAILABLE') {
+    cam.status = 'DEGRADED';
+  } else {
+    cam.status = 'ONLINE';
+  }
+  cam.updatedAt = new Date().toISOString();
+
+  // Synchronize gateway stream session
+  const telemetry = videoGateway.updateCameraStreamConfig(cam.id, {
+    sourceMode,
+    sourceType: cam.sourceType,
+    browserStreamUrl: cam.browserStreamUrl,
+    sourceAttribution: cam.sourceAttribution,
+    aiProcessingStatus: cam.aiProcessingStatus,
+  });
+
+  dataStore.logCameraAudit(
+    operator.callsign,
+    'CAMERA_SOURCE_MODE_CHANGE',
+    cam.cameraId,
+    'SUCCESS',
+    { previousMode, sourceMode, sourceType: cam.sourceType },
+    req.ip
+  );
+
+  dataStore.broadcastEvent({
+    eventId: `evt-${Date.now()}`,
+    eventType: 'camera.sourceModeChanged',
+    timestamp: new Date().toISOString(),
+    source: cam.cameraId,
+    payload: { cameraId: cam.cameraId, sourceMode, sourceType: cam.sourceType, telemetry },
+  });
+
+  res.json({
+    success: true,
+    camera: cam,
+    telemetry: telemetry || videoGateway.getStream(cam.id),
   });
 });
 

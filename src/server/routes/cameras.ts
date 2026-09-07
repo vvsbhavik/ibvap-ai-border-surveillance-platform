@@ -209,10 +209,11 @@ camerasRouter.post('/', (req: Request, res: Response) => {
 
   // Protocol validation
   const normalizedProtocol = String(protocol).toUpperCase() as CameraProtocol;
-  if (normalizedProtocol !== 'RTSP' && normalizedProtocol !== 'ONVIF') {
+  const supportedProtocols: string[] = ['RTSP', 'RTSPS', 'ONVIF', 'HLS', 'WEBRTC', 'WEBCAM', 'SIMULATED'];
+  if (!supportedProtocols.includes(normalizedProtocol)) {
     res.status(400).json({
       success: false,
-      error: "Invalid protocol. Supported protocols are 'RTSP' and 'ONVIF'.",
+      error: `Invalid protocol. Supported protocols are: ${supportedProtocols.join(', ')}.`,
     });
     return;
   }
@@ -274,7 +275,28 @@ camerasRouter.post('/', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     isDecommissioned: false,
-    isSimulated: false, // User-created, not seed
+    isSimulated: req.body.sourceMode === 'SIMULATION' || normalizedProtocol === 'SIMULATED',
+    sourceMode: (req.body.sourceMode as any) || (normalizedProtocol === 'SIMULATED' ? 'SIMULATION' : 'LIVE'),
+    sourceType:
+      (req.body.sourceType as any) ||
+      (normalizedProtocol === 'WEBCAM'
+        ? 'WEBCAM'
+        : normalizedProtocol === 'HLS'
+        ? 'HLS'
+        : normalizedProtocol === 'WEBRTC'
+        ? 'WEBRTC'
+        : normalizedProtocol === 'SIMULATED'
+        ? 'SIMULATED'
+        : 'RTSP'),
+    browserStreamUrl: req.body.browserStreamUrl || (normalizedProtocol === 'HLS' || normalizedProtocol === 'WEBRTC' ? safeEndpoint : undefined),
+    sourceAttribution: req.body.sourceAttribution || (req.body.sourceMode === 'SIMULATION' ? 'Synthetic Border Simulation' : 'Operator Added Live Stream'),
+    aiProcessingStatus:
+      (req.body.aiProcessingStatus as any) ||
+      (req.body.sourceMode === 'SIMULATION' || normalizedProtocol === 'SIMULATED'
+        ? 'READY'
+        : normalizedProtocol === 'WEBCAM'
+        ? 'READY'
+        : 'UNAVAILABLE'),
     streamConfigStatus: 'UNVALIDATED',
     connectionStatus: 'UNCHECKED',
     currentFps: numFps,
@@ -286,6 +308,13 @@ camerasRouter.post('/', (req: Request, res: Response) => {
   };
 
   dataStore.cameras.unshift(newCamera);
+
+  // Register with video gateway for immediate ingestion
+  try {
+    videoGateway.registerCameraStream(newCamera);
+  } catch (err) {
+    logger.warn(`Failed to auto-register stream for new camera ${newCamera.cameraId}: ${err}`);
+  }
 
   dataStore.logCameraAudit(
     operator.callsign,
@@ -408,12 +437,55 @@ camerasRouter.patch('/:id', (req: Request, res: Response) => {
   // Validate protocol if updating
   if (req.body.protocol !== undefined) {
     const proto = String(req.body.protocol).toUpperCase() as CameraProtocol;
-    if (proto !== 'RTSP' && proto !== 'ONVIF') {
-      res.status(400).json({ success: false, error: "Protocol must be 'RTSP' or 'ONVIF'." });
+    const supportedProtocols = ['RTSP', 'RTSPS', 'ONVIF', 'HLS', 'WEBRTC', 'WEBCAM', 'SIMULATED'];
+    if (!supportedProtocols.includes(proto)) {
+      res.status(400).json({ success: false, error: `Protocol must be one of: ${supportedProtocols.join(', ')}.` });
       return;
     }
     camera.protocol = proto;
     changes.protocol = proto;
+  }
+
+  // Live Stream Abstraction fields
+  if (req.body.sourceMode !== undefined) {
+    const mode = req.body.sourceMode;
+    camera.sourceMode = mode;
+    camera.isSimulated = mode === 'SIMULATION';
+    changes.sourceMode = mode;
+    if (mode === 'OFFLINE') camera.status = 'OFFLINE';
+    if (mode === 'LIVE' || mode === 'SIMULATION') camera.status = 'ONLINE';
+    if (mode === 'UNAVAILABLE') camera.status = 'DEGRADED';
+  }
+  if (req.body.sourceType !== undefined) {
+    camera.sourceType = req.body.sourceType;
+    changes.sourceType = camera.sourceType;
+  }
+  if (req.body.browserStreamUrl !== undefined) {
+    camera.browserStreamUrl = req.body.browserStreamUrl;
+    changes.browserStreamUrl = camera.browserStreamUrl;
+  }
+  if (req.body.sourceAttribution !== undefined) {
+    camera.sourceAttribution = req.body.sourceAttribution;
+    changes.sourceAttribution = camera.sourceAttribution;
+  }
+  if (req.body.aiProcessingStatus !== undefined) {
+    camera.aiProcessingStatus = req.body.aiProcessingStatus;
+    changes.aiProcessingStatus = camera.aiProcessingStatus;
+  } else if (req.body.sourceMode !== undefined) {
+    camera.aiProcessingStatus = camera.sourceMode === 'LIVE' ? (camera.sourceType === 'WEBCAM' ? 'READY' : 'UNAVAILABLE') : 'READY';
+  }
+
+  // Sync with video gateway
+  try {
+    videoGateway.updateCameraStreamConfig(camera.id, {
+      sourceMode: camera.sourceMode,
+      sourceType: camera.sourceType,
+      browserStreamUrl: camera.browserStreamUrl,
+      sourceAttribution: camera.sourceAttribution,
+      aiProcessingStatus: camera.aiProcessingStatus,
+    });
+  } catch (err) {
+    logger.warn(`Failed to sync gateway config for camera ${camera.cameraId}: ${err}`);
   }
 
   // Stream reference update (sanitizes secret passwords)

@@ -1,6 +1,12 @@
+// ============================================================================
+// IBVAP System Configuration, Audit Logging & Retention Router
+// ============================================================================
+
 import { Router, Response } from 'express';
 import { dataStore } from '../store';
 import { authenticate, AuthenticatedRequest, requirePermission } from '../middleware/auth';
+import { retentionService } from '../../storage/retention-service';
+import { appConfig } from '../../config/app-config';
 
 export const systemRouter = Router();
 
@@ -116,7 +122,8 @@ systemRouter.post('/audit-logs/export', requirePermission('audit.view'), (req: A
 let systemPlatformConfig = {
   systemName: 'IBVAP Intelligent Border Video Analytics Platform',
   version: '2.4.0',
-  environment: 'production',
+  environment: appConfig.profile.toLowerCase(),
+  profile: appConfig.profile,
   features: {
     aiCopilot: true,
     gisMapping: true,
@@ -125,7 +132,7 @@ let systemPlatformConfig = {
     simulationEngine: true,
     strictRbac: true,
   },
-  retentionDays: 90,
+  retentionDays: Math.round(appConfig.retention.incidentsTtlHours / 24),
   activeJurisdiction: 'Sector 04 North Command — Eagle Pass Buffer',
   authSettings: {
     sessionTimeoutMinutes: 480,
@@ -179,3 +186,26 @@ systemRouter.put('/config', requirePermission('system.configure'), (req: Authent
   });
 });
 
+// GET /api/v1/system/retention (Inspect active retention policies)
+systemRouter.get('/retention', requirePermission('system.configure'), (_req: AuthenticatedRequest, res: Response) => {
+  return res.json({
+    success: true,
+    policy: retentionService.getPolicy(),
+  });
+});
+
+// POST /api/v1/system/retention/prune (Execute or preview retention purge)
+systemRouter.post('/retention/prune', requirePermission('system.configure'), async (req: AuthenticatedRequest, res: Response) => {
+  const { dryRun = false } = req.body;
+  const operatorCallsign = req.user?.callsign || 'SYSTEM';
+
+  const result = await retentionService.runPrune({
+    dryRun: Boolean(dryRun),
+    operatorCallsign,
+  });
+
+  return res.json({
+    success: true,
+    result,
+  });
+});

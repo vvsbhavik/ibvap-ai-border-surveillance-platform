@@ -114,6 +114,10 @@ export class ObservationRuleEngine {
     }
   }
 
+  private findCamera(cameraId: string) {
+    return dataStore.cameras.find((c) => c.cameraId === cameraId || c.identifier === cameraId);
+  }
+
   /**
    * 1. Evaluate Night Movement Analytics.
    */
@@ -136,7 +140,7 @@ export class ObservationRuleEngine {
       return null;
     }
 
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -209,7 +213,7 @@ export class ObservationRuleEngine {
 
     if (params.dwellSeconds < threshold) return null;
 
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -277,7 +281,7 @@ export class ObservationRuleEngine {
     this.fenceCrossingsByTrack.set(params.trackId, recent);
 
     if (recent.length >= this.config.repeatedFence.thresholdCrossings) {
-      const camera = dataStore.getCamera(params.cameraId);
+      const camera = this.findCamera(params.cameraId);
       const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
       const sectorId = camera?.sectorId || 'sec-bravo';
       const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -344,7 +348,7 @@ export class ObservationRuleEngine {
       params.observedDirection !== 'UNKNOWN' &&
       params.observedDirection !== params.expectedDirection
     ) {
-      const camera = dataStore.getCamera(params.cameraId);
+      const camera = this.findCamera(params.cameraId);
       const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
       const sectorId = camera?.sectorId || 'sec-bravo';
       const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -413,7 +417,7 @@ export class ObservationRuleEngine {
       return null;
     }
 
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -469,7 +473,7 @@ export class ObservationRuleEngine {
     timestamp?: string;
     provenance?: SourceProvenance;
   }): AdvancedAnalyticsEvent {
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -530,7 +534,7 @@ export class ObservationRuleEngine {
 
     if (params.trackIds.length < this.config.groupActivity.minGroupSize) return null;
 
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';
@@ -586,7 +590,7 @@ export class ObservationRuleEngine {
 
     if (params.appearanceCount < this.config.repeatedObservations.minAppearances) return null;
 
-    const camera = dataStore.getCamera(params.cameraId);
+    const camera = this.findCamera(params.cameraId);
     const camIdentifier = params.cameraIdentifier || camera?.cameraId || params.cameraId;
     const sectorId = camera?.sectorId || 'sec-bravo';
     const sectorName = camera?.sectorName || 'Sector Bravo';

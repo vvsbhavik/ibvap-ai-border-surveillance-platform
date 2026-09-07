@@ -15,6 +15,7 @@ import {
   Shield,
   Lock,
   UserCheck,
+  Network,
 } from 'lucide-react';
 import { PermissionKey } from '../../server/types';
 
@@ -28,6 +29,7 @@ export type NavScreen =
   | 'gis'
   | 'anpr'
   | 'faces'
+  | 'analytics'
   | 'watchlists'
   | 'copilot'
   | 'health'
@@ -127,10 +129,17 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           requiredPermission: 'monitoring.view',
         },
         {
+          id: 'analytics',
+          label: 'Border Analytics & Graph',
+          icon: Network,
+          hotkey: '7',
+          requiredPermission: 'monitoring.view',
+        },
+        {
           id: 'watchlists',
           label: 'Watchlists',
           icon: FileSpreadsheet,
-          hotkey: '7',
+          hotkey: '8',
           requiredPermission: 'watchlist.view',
         },
         {

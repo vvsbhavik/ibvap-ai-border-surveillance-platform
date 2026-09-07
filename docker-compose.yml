@@ -10,11 +10,12 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      - APP_PROFILE=PRODUCTION
       - PORT=3000
       - DATABASE_URL=postgres://ibvap_admin:ibvap_secure_pass@postgres:5432/ibvap_core
       - REDIS_URL=redis://redis:6379/0
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
-      - JWT_SECRET=ibvap-mission-critical-token-secret-2026
+      - JWT_SECRET=${JWT_SECRET:-ibvap-mission-critical-token-secret-2026}
     depends_on:
       postgres:
         condition: service_healthy
@@ -102,15 +103,6 @@ services:
   #           - driver: nvidia
   #             count: 1
   #             capabilities: [gpu]
-  #   networks:
-  #     - ibvap-network
-
-  # Extension Point: n8n Workflow Automation
-  # n8n:
-  #   image: n8nio/n8n:latest
-  #   container_name: ibvap-n8n
-  #   ports:
-  #     - "5678:5678"
   #   networks:
   #     - ibvap-network
 

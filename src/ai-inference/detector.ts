@@ -121,23 +121,37 @@ export class YolosTinyDetector implements IObjectDetector {
       return await this.rawImageModule.fromBlob(blob);
     }
 
-    // 3. If frame has an SVG dataUri, rasterize to JPEG buffer using Sharp
+    // 3. If frame has a dataUri (SVG, JPEG, or PNG)
     if (frame.dataUri) {
-      let svgString: string;
       if (frame.dataUri.startsWith('data:image/svg+xml;utf8,')) {
-        svgString = decodeURIComponent(frame.dataUri.replace('data:image/svg+xml;utf8,', ''));
+        const svgString = decodeURIComponent(frame.dataUri.replace('data:image/svg+xml;utf8,', ''));
+        const rasterBuffer = await sharp(Buffer.from(svgString))
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        const blob = new Blob([rasterBuffer], { type: 'image/jpeg' });
+        return await this.rawImageModule.fromBlob(blob);
       } else if (frame.dataUri.startsWith('data:image/svg+xml;base64,')) {
-        svgString = Buffer.from(frame.dataUri.replace('data:image/svg+xml;base64,', ''), 'base64').toString('utf8');
+        const svgString = Buffer.from(frame.dataUri.replace('data:image/svg+xml;base64,', ''), 'base64').toString('utf8');
+        const rasterBuffer = await sharp(Buffer.from(svgString))
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        const blob = new Blob([rasterBuffer], { type: 'image/jpeg' });
+        return await this.rawImageModule.fromBlob(blob);
+      } else if (frame.dataUri.startsWith('data:image/')) {
+        const base64Data = frame.dataUri.split(',')[1];
+        if (base64Data) {
+          const imgBuffer = Buffer.from(base64Data, 'base64');
+          const blob = new Blob([imgBuffer], { type: 'image/jpeg' });
+          return await this.rawImageModule.fromBlob(blob);
+        }
       } else {
-        svgString = frame.dataUri;
+        // Fallback raw buffer
+        const rasterBuffer = await sharp(Buffer.from(frame.dataUri))
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        const blob = new Blob([rasterBuffer], { type: 'image/jpeg' });
+        return await this.rawImageModule.fromBlob(blob);
       }
-
-      const rasterBuffer = await sharp(Buffer.from(svgString))
-        .jpeg({ quality: 85 })
-        .toBuffer();
-
-      const blob = new Blob([rasterBuffer], { type: 'image/jpeg' });
-      return await this.rawImageModule.fromBlob(blob);
     }
 
     throw new Error(`Invalid frame: No readable image data found for camera ${frame.cameraId}`);
