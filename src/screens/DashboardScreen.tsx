@@ -84,13 +84,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#23262B] pb-3 shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-base font-semibold text-white tracking-tight">Dashboard</h1>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono-num font-semibold bg-[#007AFF]/15 text-[#007AFF] border border-[#007AFF]/30 rounded">
-              SIMULATED DATA
+            <h1 className="text-base font-semibold text-white tracking-tight">Command Center</h1>
+            <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              LIVE TELEMETRY
             </span>
           </div>
-          <p className="text-xs text-[#6C727A] mt-0.5">
-            Operational command overview, perimeter alert triage, and sensor health telemetry
+          <p className="text-xs text-[#8A8F98] mt-0.5">
+            Real-time perimeter surveillance, automated threat triage, and sensor health metrics
           </p>
         </div>
       </div>

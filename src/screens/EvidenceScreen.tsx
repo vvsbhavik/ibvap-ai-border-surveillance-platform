@@ -74,12 +74,9 @@ export const EvidenceScreen: React.FC<EvidenceScreenProps> = ({
       <div className="p-4 sm:px-6 bg-[#0F1115] border-b border-[#23262B] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold text-white">Evidence Vault</h1>
+            <h1 className="text-base font-semibold text-white">Evidence Vault</h1>
             <span className="px-2 py-0.5 bg-[#14161A] border border-[#23262B] text-[#A9ACB1] rounded text-[11px] font-mono-num font-medium">
-              {safeList.length} Archived Items
-            </span>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono-num font-semibold bg-[#007AFF]/15 text-[#007AFF] border border-[#007AFF]/30 rounded">
-              SIMULATED DATA
+              {safeList.length} Sealed Records
             </span>
           </div>
           <p className="text-xs text-[#6C727A] mt-0.5">

@@ -24,17 +24,13 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 
 // Screens
 import { LoginScreen } from './screens/LoginScreen';
-import { DashboardScreen } from './screens/DashboardScreen';
 import { CamerasScreen } from './screens/CamerasScreen';
 import { LiveScreen } from './screens/LiveScreen';
 import { AlertsScreen } from './screens/AlertsScreen';
 import { IncidentsScreen } from './screens/IncidentsScreen';
 import { EvidenceScreen } from './screens/EvidenceScreen';
-import { GisScreen } from './screens/GisScreen';
 import { AnprScreen } from './screens/AnprScreen';
-import { FacesScreen } from './screens/FacesScreen';
 import { AnalyticsScreen } from './screens/AnalyticsScreen';
-import { WatchlistsScreen } from './screens/WatchlistsScreen';
 import { CopilotScreen } from './screens/CopilotScreen';
 import { HealthScreen } from './screens/HealthScreen';
 import { AdminScreen } from './screens/AdminScreen';
@@ -471,31 +467,11 @@ export function App() {
           />
 
           <main className="flex-1 flex flex-col bg-[#0A0B0D] overflow-hidden relative">
-            <ErrorBoundary onReset={() => setCurrentScreen('dashboard')}>
+            <ErrorBoundary onReset={() => setCurrentScreen('live')}>
               {isInitialLoading ? (
                 <LoadingState message="Connecting to IBVAP Command Event Bus..." />
               ) : (
                 <>
-                  {currentScreen === 'dashboard' && (
-                    <DashboardScreen
-                      cameras={visibleCameras}
-                      alerts={visibleAlerts}
-                      incidents={visibleIncidents}
-                      selectedSector={selectedSectorId}
-                      onAcknowledgeAlert={handleAcknowledgeAlert}
-                      onEscalateAlert={(a) =>
-                        handleEscalateAlert(
-                          a.id,
-                          `Operational Incident - ${a.alertNumber}`,
-                          a.description
-                        )
-                      }
-                      onDismissAlert={(id) => handleDismissAlert(id, 'False Positive - Verified Wildlife')}
-                      onNavigateToScreen={(s) => setCurrentScreen(s as NavScreen)}
-                      onSelectCamera={() => setCurrentScreen('live')}
-                      onRunSimulation={handleRunSimulationDrill}
-                    />
-                  )}
 
                 {currentScreen === 'cameras' && (
                   <CamerasScreen
@@ -548,14 +524,6 @@ export function App() {
                   />
                 )}
 
-                {currentScreen === 'gis' && (
-                  <GisScreen
-                    cameras={visibleCameras}
-                    sectors={sectors}
-                    zones={zones}
-                    onSelectCamera={() => setCurrentScreen('live')}
-                  />
-                )}
 
                 {currentScreen === 'anpr' && (
                   <AnprScreen
@@ -566,17 +534,6 @@ export function App() {
                   />
                 )}
 
-                {currentScreen === 'faces' && (
-                  <FacesScreen
-                    onEscalateFace={(rec) => {
-                      handleEscalateAlert(
-                        `alt-face-${rec.personTrackId}`,
-                        `Biometric Watchlist Hit - ${rec.watchlistDisplayName || 'Subject of Interest'}`,
-                        `Positive biometric match for ${rec.watchlistDisplayName} on Person Track ${rec.personTrackId} (Confidence: ${(((rec.similarityScore ?? 0.9)) * 100).toFixed(1)}%) in ${rec.spatialContext?.sectorName || 'Sector Bravo'}`
-                      );
-                    }}
-                  />
-                )}
 
                 {currentScreen === 'analytics' && (
                   <AnalyticsScreen
@@ -594,14 +551,6 @@ export function App() {
                         `${evt.triggerReason} on Camera ${evt.cameraIdentifier} (${evt.sectorName}). Track: ${evt.trackId || 'N/A'}. Severity: ${evt.severity}.`
                       );
                     }}
-                  />
-                )}
-
-                {currentScreen === 'watchlists' && (
-                  <WatchlistsScreen
-                    watchlists={watchlists}
-                    onCreateEntry={handleCreateWatchlist}
-                    onToggleEntry={handleToggleWatchlist}
                   />
                 )}
 

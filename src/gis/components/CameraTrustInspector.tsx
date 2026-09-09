@@ -36,12 +36,15 @@ export const CameraTrustInspector: React.FC<CameraTrustInspectorProps> = ({
     try {
       setLoading(true);
       const res = await fetch(`/api/v1/camera-trust/${camera.cameraId}`);
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
       const json = await res.json();
       if (json.success && json.evaluation) {
         setEvaluation(json.evaluation);
       }
-    } catch (err) {
-      console.error('Failed to fetch camera trust evaluation', err);
+    } catch {
+      // Gracefully handle transient network or rate limits
     } finally {
       setLoading(false);
     }
@@ -49,7 +52,7 @@ export const CameraTrustInspector: React.FC<CameraTrustInspectorProps> = ({
 
   useEffect(() => {
     fetchEvaluation();
-    const interval = setInterval(fetchEvaluation, 3000);
+    const interval = setInterval(fetchEvaluation, 15000);
     return () => clearInterval(interval);
   }, [camera.cameraId]);
 

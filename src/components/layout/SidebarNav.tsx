@@ -1,37 +1,31 @@
 import React from 'react';
 import {
-  LayoutDashboard,
   Camera,
   Grid,
   AlertTriangle,
   ShieldAlert,
   FolderArchive,
-  Map,
   Car,
-  FileSpreadsheet,
   Sparkles,
   Activity,
   Settings,
   Shield,
   Lock,
-  UserCheck,
   Network,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { PermissionKey } from '../../server/types';
 
 export type NavScreen =
-  | 'dashboard'
-  | 'cameras'
   | 'live'
   | 'alerts'
   | 'incidents'
-  | 'evidence'
-  | 'gis'
   | 'anpr'
-  | 'faces'
   | 'analytics'
-  | 'watchlists'
   | 'copilot'
+  | 'evidence'
+  | 'cameras'
   | 'health'
   | 'admin';
 
@@ -57,6 +51,7 @@ export interface SidebarNavProps {
   openIncidentsCount: number;
   userPermissions?: PermissionKey[];
   isCollapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 export const SidebarNav: React.FC<SidebarNavProps> = ({
@@ -66,23 +61,17 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
   openIncidentsCount,
   userPermissions,
   isCollapsed = false,
+  onToggleCollapse,
 }) => {
   const groups: NavGroup[] = [
     {
       title: 'OPERATIONS',
       items: [
         {
-          id: 'dashboard',
-          label: 'Dashboard',
-          icon: LayoutDashboard,
-          hotkey: '1',
-          requiredPermission: 'dashboard.view',
-        },
-        {
           id: 'live',
-          label: 'Live Monitoring Wall',
+          label: 'Live Surveillance Wall',
           icon: Grid,
-          hotkey: '2',
+          hotkey: '1',
           requiredPermission: 'monitoring.view',
         },
         {
@@ -91,7 +80,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           badge: pendingAlertsCount > 0 ? pendingAlertsCount : undefined,
           badgeVariant: 'critical',
           icon: AlertTriangle,
-          hotkey: '3',
+          hotkey: '2',
           requiredPermission: 'alert.view',
         },
         {
@@ -100,15 +89,8 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
           badge: openIncidentsCount > 0 ? openIncidentsCount : undefined,
           badgeVariant: 'attention',
           icon: ShieldAlert,
-          hotkey: '4',
+          hotkey: '3',
           requiredPermission: 'incident.view',
-        },
-        {
-          id: 'gis',
-          label: 'GIS Operational Map',
-          icon: Map,
-          hotkey: '5',
-          requiredPermission: 'gis.view',
         },
       ],
     },
@@ -116,50 +98,37 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
       title: 'INTELLIGENCE',
       items: [
         {
-          id: 'anpr',
-          label: 'ANPR',
-          icon: Car,
-          hotkey: '6',
-          requiredPermission: 'anpr.view',
+          id: 'copilot',
+          label: 'Gemini AI Copilot',
+          icon: Sparkles,
+          hotkey: '4',
+          requiredPermission: 'copilot.use',
         },
         {
-          id: 'faces',
-          label: 'Face Analytics',
-          icon: UserCheck,
-          requiredPermission: 'monitoring.view',
+          id: 'anpr',
+          label: 'ANPR (Indian Registry)',
+          icon: Car,
+          hotkey: '5',
+          requiredPermission: 'anpr.view',
         },
         {
           id: 'analytics',
           label: 'Border Analytics & Graph',
           icon: Network,
-          hotkey: '7',
+          hotkey: '6',
           requiredPermission: 'monitoring.view',
-        },
-        {
-          id: 'watchlists',
-          label: 'Watchlists',
-          icon: FileSpreadsheet,
-          hotkey: '8',
-          requiredPermission: 'watchlist.view',
-        },
-        {
-          id: 'copilot',
-          label: 'Gemini AI Copilot',
-          icon: Sparkles,
-          hotkey: '8',
-          requiredPermission: 'copilot.use',
         },
         {
           id: 'evidence',
           label: 'Evidence Vault',
           icon: FolderArchive,
-          hotkey: '9',
+          hotkey: '7',
           requiredPermission: 'evidence.view',
         },
       ],
     },
     {
-      title: 'SYSTEM',
+      title: 'SYSTEM & CLOUD',
       items: [
         {
           id: 'cameras',
@@ -175,7 +144,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
         },
         {
           id: 'admin',
-          label: 'Administration',
+          label: 'Admin & Supabase',
           icon: Settings,
           requiredPermission: 'user.view',
         },
@@ -185,7 +154,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
 
   return (
     <aside
-      className={`bg-[#0F1115] border-r border-[#23262B] flex flex-col justify-between select-none shrink-0 transition-all ${
+      className={`bg-[#0F1115] border-r border-[#23262B] flex flex-col justify-between select-none shrink-0 transition-all duration-200 ${
         isCollapsed ? 'w-14' : 'w-56'
       }`}
     >
@@ -212,12 +181,12 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
                   key={item.id}
                   type="button"
                   onClick={() => onNavigate(item.id)}
-                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded text-xs font-medium transition-colors cursor-pointer group ${
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded text-xs font-medium transition-colors cursor-pointer group ${
                     isActive
                       ? 'bg-[#1A1D23] text-white font-semibold shadow-xs'
-                      : 'text-[#6C727A] hover:text-[#E0E2E6] hover:bg-[#14161A]'
+                      : 'text-[#8A8F98] hover:text-[#E0E2E6] hover:bg-[#14161A]'
                   }`}
-                  title={hasAccess ? item.label : `${item.label} (Requires ${item.requiredPermission})`}
+                  title={item.label}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Icon
@@ -264,18 +233,40 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({
         ))}
       </div>
 
-      {/* Footer / System Status */}
-      {!isCollapsed && (
-        <div className="p-3 border-t border-[#23262B] bg-[#0F1115] text-[10px] text-[#6C727A]">
-          <div className="flex items-center gap-1.5 text-white font-medium">
-            <Shield className="w-3.5 h-3.5 text-[#007AFF]" />
-            <span>RBAC Protected Station</span>
+      {/* Footer / Toggle & Status */}
+      <div className="p-2 border-t border-[#23262B] bg-[#0F1115]">
+        {onToggleCollapse && (
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className={`w-full flex items-center ${
+              isCollapsed ? 'justify-center' : 'justify-between'
+            } px-2 py-1.5 rounded text-xs text-[#8A8F98] hover:text-white hover:bg-[#14161A] transition-colors cursor-pointer mb-1`}
+            title={isCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar'}
+          >
+            <div className="flex items-center gap-2">
+              {isCollapsed ? (
+                <PanelLeftOpen className="w-4 h-4 text-[#007AFF]" />
+              ) : (
+                <PanelLeftClose className="w-4 h-4" />
+              )}
+              {!isCollapsed && <span className="text-[11px]">Collapse Sidebar</span>}
+            </div>
+          </button>
+        )}
+
+        {!isCollapsed && (
+          <div className="px-2 py-1 text-[10px] text-[#6C727A]">
+            <div className="flex items-center gap-1.5 text-[#A9ACB1] font-medium">
+              <Shield className="w-3 h-3 text-[#007AFF]" />
+              <span>BSF / IBVAP Border Guard</span>
+            </div>
+            <div className="text-[9px] text-[#555A62] mt-0.5 font-mono">
+              Supabase Connected • AES-256
+            </div>
           </div>
-          <div className="text-[10px] text-[#6C727A] mt-0.5">
-            Audit logging active
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </aside>
   );
 };

@@ -1,6 +1,6 @@
 {
   "name": "IBVAP — Intelligent Border Video Analytics Platform",
   "description": "Intelligent border video analytics and surveillance operations platform.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": ["camera", "microphone"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

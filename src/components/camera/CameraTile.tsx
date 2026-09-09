@@ -13,6 +13,7 @@ import {
   Square,
   Shield,
   Info,
+  Upload,
 } from 'lucide-react';
 import { Camera, SpatialZone } from '../../server/types';
 import { formatFps, formatLatency } from '../../utils/formatters';
@@ -66,6 +67,7 @@ export const CameraTile: React.FC<CameraTileProps> = ({
   const [isTogglingLive, setIsTogglingLive] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Normalize source mode: LIVE | SIMULATION | OFFLINE | UNAVAILABLE
   const effectiveMode: 'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE' =
@@ -92,15 +94,24 @@ export const CameraTile: React.FC<CameraTileProps> = ({
     return unsubscribe;
   }, [camera.id]);
 
-  // Connect local media stream to video element when live webcam is active
+  // Connect local media stream or uploaded video file to element when live is active
   useEffect(() => {
-    if (isLive && liveState.isStreaming && videoRef.current && liveState.mediaStream) {
-      if (videoRef.current.srcObject !== liveState.mediaStream) {
-        videoRef.current.srcObject = liveState.mediaStream;
-        videoRef.current.play().catch((err) => console.warn('Tile video autoplay error:', err));
+    if (isLive && liveState.isStreaming && videoRef.current) {
+      if (liveState.mediaStream) {
+        if (videoRef.current.srcObject !== liveState.mediaStream) {
+          videoRef.current.srcObject = liveState.mediaStream;
+          videoRef.current.play().catch((err) => console.warn('Tile video autoplay error:', err));
+        }
+      } else if (liveState.fileUrl) {
+        if (videoRef.current.src !== liveState.fileUrl) {
+          videoRef.current.srcObject = null;
+          videoRef.current.src = liveState.fileUrl;
+          videoRef.current.loop = true;
+          videoRef.current.play().catch((err) => console.warn('Tile video file play error:', err));
+        }
       }
     }
-  }, [isLive, liveState.isStreaming, liveState.mediaStream]);
+  }, [isLive, liveState.isStreaming, liveState.mediaStream, liveState.fileUrl]);
 
   // Poll video gateway for frames and CV detections
   useEffect(() => {
@@ -157,7 +168,7 @@ export const CameraTile: React.FC<CameraTileProps> = ({
 
     fetchFrameAndDetections();
     // Fast polling for smoothly moving frames (500ms for active feeds)
-    const interval = setInterval(fetchFrameAndDetections, isLive && liveState.isStreaming ? 1000 : 600);
+    const interval = setInterval(fetchFrameAndDetections, 2500);
 
     return () => {
       isMounted = false;
@@ -209,6 +220,33 @@ export const CameraTile: React.FC<CameraTileProps> = ({
       }
     } catch (err: any) {
       console.error('Failed to toggle live webcam:', err);
+    } finally {
+      setIsTogglingLive(false);
+    }
+  };
+
+  const handleVideoFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsTogglingLive(true);
+    try {
+      await liveStreamManager.startVideoFileStream(camera.id, file);
+      await api.video.setSourceMode(camera.id, {
+        sourceMode: 'LIVE',
+        sourceType: 'FILE' as any,
+        sourceAttribution: `Uploaded File: ${file.name}`,
+      });
+      if (onModeChanged) {
+        onModeChanged({
+          ...camera,
+          sourceMode: 'LIVE',
+          sourceType: 'FILE' as any,
+          isSimulated: false,
+          sourceAttribution: `Uploaded File: ${file.name}`,
+        });
+      }
+    } catch (err) {
+      console.error('Video file upload failed:', err);
     } finally {
       setIsTogglingLive(false);
     }
@@ -279,7 +317,7 @@ export const CameraTile: React.FC<CameraTileProps> = ({
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
           {/* FPS & Latency Counter */}
           {!isOffline && !isUnavailable && (
             <span className="text-[10px] font-mono-num text-[#8A8F98]">
@@ -288,28 +326,22 @@ export const CameraTile: React.FC<CameraTileProps> = ({
             </span>
           )}
 
-          {/* Quick Webcam Go-Live Button */}
+          {/* Station Webcam Toggle */}
           <button
             type="button"
             onClick={handleToggleWebcam}
             disabled={isTogglingLive}
-            title={liveState.isStreaming ? 'Stop live webcam stream' : 'Transmit local webcam to this camera'}
-            className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-medium flex items-center gap-1 transition-all ${
+            title={liveState.isStreaming ? 'Stop webcam stream' : 'Transmit station webcam'}
+            className={`p-1 rounded cursor-pointer transition-colors ${
               liveState.isStreaming
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
-                : 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 border border-slate-700'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                : 'text-[#6C727A] hover:text-white hover:bg-[#23262B]'
             }`}
           >
             {liveState.isStreaming ? (
-              <>
-                <Square className="w-2.5 h-2.5 fill-current text-emerald-400" />
-                <span>LIVE</span>
-              </>
+              <Square className="w-3 h-3 fill-current text-emerald-400" />
             ) : (
-              <>
-                <Video className="w-2.5 h-2.5 text-cyan-400" />
-                <span>GO LIVE</span>
-              </>
+              <Video className="w-3 h-3" />
             )}
           </button>
 
@@ -321,7 +353,7 @@ export const CameraTile: React.FC<CameraTileProps> = ({
                 e.stopPropagation();
                 onMaximize(camera);
               }}
-              className="p-1 text-[#6C727A] hover:text-white rounded hover:bg-[#23262B] transition-colors"
+              className="p-1 text-[#6C727A] hover:text-white rounded hover:bg-[#23262B] transition-colors cursor-pointer"
               title="Maximize feed"
             >
               <Maximize2 className="w-3 h-3" />
@@ -421,8 +453,9 @@ export const CameraTile: React.FC<CameraTileProps> = ({
               className="w-full h-full object-cover select-none"
               onError={() => console.warn(`Direct stream error on ${camera.id}`)}
             />
-            <div className="absolute top-1.5 right-1.5 z-10 px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-500/70 text-emerald-300 rounded text-[9px] font-mono font-bold tracking-tight shadow-sm">
-              LIVE STREAM ({camera.sourceType || 'HLS'})
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs border border-emerald-500/40 text-emerald-400 rounded text-[10px] font-mono font-medium shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span>LIVE</span>
             </div>
 
             {/* AI Bounding Box & Multi-Object Tracking Overlays */}
@@ -450,9 +483,9 @@ export const CameraTile: React.FC<CameraTileProps> = ({
               alt={camera.name}
               className="w-full h-full object-cover select-none pointer-events-none"
             />
-            <div className="absolute top-1.5 right-1.5 z-10 flex items-center gap-1 px-1.5 py-0.5 bg-emerald-950/80 border border-emerald-500/70 text-emerald-300 rounded text-[9px] font-mono font-bold tracking-tight shadow-sm">
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs border border-emerald-500/40 text-emerald-400 rounded text-[10px] font-mono font-medium shadow-sm">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-              <span>LIVE CCTV ({camera.protocol || camera.sourceType || 'RTSP'})</span>
+              <span>LIVE ({camera.protocol || camera.sourceType || 'RTSP'})</span>
             </div>
             {camera.sourceAttribution && (
               <div className="absolute bottom-1.5 left-1.5 z-10 px-1.5 py-0.5 bg-black/75 text-slate-300 rounded text-[9px] font-mono truncate max-w-[75%]">
@@ -478,29 +511,49 @@ export const CameraTile: React.FC<CameraTileProps> = ({
         ) : isLive ? (
           /* MODE C4: LIVE CAMERA CONNECTING OR READY */
           <div className="flex flex-col items-center justify-center text-center p-4 bg-[#0A0D10]">
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="video/mp4,video/webm,video/ogg,video/quicktime"
+              className="hidden"
+              onChange={handleVideoFileUpload}
+            />
             <Video className="w-6 h-6 text-emerald-400 mb-1.5 opacity-90 animate-pulse" />
-            <span className="text-xs font-semibold text-emerald-400">Live CCTV Stream Initializing</span>
-            <span className="text-[10px] text-slate-400 mt-0.5 max-w-[220px] truncate">
-              {camera.streamEndpointReference || 'Awaiting live frame ingestion...'}
+            <span className="text-xs font-semibold text-emerald-400">Live CCTV Stream Ingestion</span>
+            <span className="text-[10px] text-slate-400 mt-0.5 max-w-[240px] truncate">
+              {camera.streamEndpointReference || 'Awaiting live stream, webcam or video clip...'}
             </span>
-            <div className="flex items-center gap-2 mt-2.5">
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-2.5">
               <button
                 type="button"
                 onClick={handleReconnect}
                 disabled={isReconnecting}
-                className="px-2.5 py-1 text-[10px] font-mono bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-300 rounded border border-emerald-500/40 flex items-center gap-1.5 transition-colors"
+                className="px-2.5 py-1 text-[10px] font-mono bg-emerald-950/50 hover:bg-emerald-900/50 text-emerald-300 rounded border border-emerald-500/40 flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <RefreshCw className={`w-2.5 h-2.5 ${isReconnecting ? 'animate-spin' : ''}`} />
-                <span>Reconnect Stream</span>
+                <span>Reconnect</span>
               </button>
               <button
                 type="button"
                 onClick={handleToggleWebcam}
                 disabled={isTogglingLive}
-                className="px-2.5 py-1 text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 flex items-center gap-1.5 transition-colors"
+                className="px-2.5 py-1 text-[10px] font-mono bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Video className="w-2.5 h-2.5 text-cyan-400" />
-                <span>Station Webcam</span>
+                <span>Webcam</span>
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileInputRef.current?.click();
+                }}
+                disabled={isTogglingLive}
+                className="px-2.5 py-1 text-[10px] font-mono bg-blue-950/60 hover:bg-blue-900/60 text-blue-300 rounded border border-blue-500/40 flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Upload MP4/WebM surveillance clip to ingest"
+              >
+                <Upload className="w-2.5 h-2.5 text-blue-400" />
+                <span>Ingest Video</span>
               </button>
             </div>
           </div>
@@ -522,9 +575,10 @@ export const CameraTile: React.FC<CameraTileProps> = ({
               </div>
             )}
 
-            {/* Mandatory Simulation Watermark Badge */}
-            <div className="absolute top-1.5 right-1.5 z-10 px-1.5 py-0.5 bg-[#DC2626]/85 text-white rounded border border-[#EF4444]/60 text-[9px] font-mono font-bold tracking-tight shadow-xs">
-              SIMULATED RTSP FEED
+            {/* Stream Status Overlay Badge */}
+            <div className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-xs text-slate-300 rounded border border-white/10 text-[10px] font-mono font-medium shadow-sm">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span>{camera.protocol || 'RTSP'}</span>
             </div>
 
             {/* Genuine Computer Vision AI Bounding Box & Multi-Object Tracking Overlays */}
@@ -563,11 +617,10 @@ export const CameraTile: React.FC<CameraTileProps> = ({
             {camera.protocol || (isLive ? 'WEBCAM' : 'RTSP')}
           </span>
 
-          {/* AI Subsystem Status: Strictly Truthful */}
+          {/* AI Subsystem Status */}
           {isLive ? (
-            <span className="text-[10px] text-amber-400/90 font-mono font-medium flex items-center gap-1 bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-800/40">
-              <Info className="w-2.5 h-2.5" />
-              <span>AI: UNAVAILABLE</span>
+            <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+              <span>Live Feed</span>
             </span>
           ) : camera.aiPipelineEnabled ? (
             tracks.length > 0 ? (

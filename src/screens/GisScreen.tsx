@@ -63,18 +63,21 @@ export const GisScreen: React.FC<GisScreenProps> = ({
   const fetchGisContext = async () => {
     try {
       const res = await fetch('/api/v1/gis/context');
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
       const json = await res.json();
       if (json.success && json.data) {
         setGisContext(json.data);
       }
-    } catch (err) {
-      console.error('Failed to fetch GIS operational context', err);
+    } catch {
+      // Soft fail on network/rate-limit throttle
     }
   };
 
   useEffect(() => {
     fetchGisContext();
-    const interval = setInterval(fetchGisContext, 4000);
+    const interval = setInterval(fetchGisContext, 20000);
     return () => clearInterval(interval);
   }, []);
 

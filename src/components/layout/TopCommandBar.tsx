@@ -7,6 +7,8 @@ import {
   Shield,
   ChevronDown,
   UserCheck,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import { User, Sector } from '../../server/types';
 import { useTheme } from '../../design-system/theme';
@@ -23,6 +25,8 @@ export interface TopCommandBarProps {
   onSwitchUser?: (callsign: string) => void;
   isRealtimeConnected: boolean;
   systemStatus: 'HEALTHY' | 'ATTENTION' | 'DEGRADED';
+  isSidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export const TopCommandBar: React.FC<TopCommandBarProps> = ({
@@ -34,6 +38,8 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
   onLogout,
   onSwitchUser,
   systemStatus,
+  isSidebarCollapsed = false,
+  onToggleSidebar,
 }) => {
   const { theme, toggleTheme } = useTheme();
   const [time, setTime] = useState(new Date());
@@ -47,17 +53,33 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
   const zuluTime = time.toISOString().substring(11, 19) + ' UTC';
 
   const simulatedRoles = [
-    { callsign: 'COMMANDER-1', role: 'Administrator', label: 'COMMANDER-1 (Admin)' },
-    { callsign: 'SENTINEL-LEAD', role: 'Watch Commander', label: 'SENTINEL-LEAD (Commander)' },
-    { callsign: 'WATCH-OP-01', role: 'Surveillance Operator', label: 'WATCH-OP-01 (Operator)' },
-    { callsign: 'ANALYST-02', role: 'Evidence Analyst', label: 'ANALYST-02 (Analyst)' },
-    { callsign: 'AUDITOR-01', role: 'Security Auditor', label: 'AUDITOR-01 (Auditor)' },
+    { callsign: 'COMMANDER-SHARMA', role: 'Administrator', label: 'DIG Rajesh Sharma (Admin)' },
+    { callsign: 'INSPECTOR-VIKRAM', role: 'Watch Commander', label: 'Ins. Vikram Singh (Commander)' },
+    { callsign: 'SURVEILLANCE-PRIYA', role: 'Surveillance Operator', label: 'SI Priya Nair (Operator)' },
+    { callsign: 'FORENSIC-ROY', role: 'Evidence Analyst', label: 'AC Ananya Roy (Forensic Analyst)' },
+    { callsign: 'AUDITOR-MENON', role: 'Security Auditor', label: 'Suresh Menon (Auditor)' },
   ];
 
   return (
     <header className="h-12 w-full bg-[#0F1115] border-b border-[#23262B] px-4 flex items-center justify-between select-none z-30 shrink-0">
-      {/* 1. Left: IBVAP Brand & Sector */}
+      {/* 1. Left: Sidebar Toggle, IBVAP Brand & Sector */}
       <div className="flex items-center gap-3">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            id="btn-toggle-sidebar"
+            onClick={onToggleSidebar}
+            className="p-1.5 rounded bg-[#14161A] hover:bg-[#1C2026] text-[#A9ACB1] hover:text-white border border-[#23262B] transition-colors cursor-pointer"
+            title={isSidebarCollapsed ? 'Open Sidebar (Ctrl+B)' : 'Close Sidebar (Ctrl+B)'}
+          >
+            {isSidebarCollapsed ? (
+              <PanelLeftOpen className="w-4 h-4 text-[#007AFF]" />
+            ) : (
+              <PanelLeftClose className="w-4 h-4" />
+            )}
+          </button>
+        )}
+
         <div className="flex items-center gap-2">
           <div className="w-5 h-5 bg-[#007AFF] flex items-center justify-center rounded-xs text-white">
             <div className="w-2 h-2 bg-white rounded-2xs" />
@@ -65,8 +87,9 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
           <span className="font-bold tracking-tight text-white text-base leading-none">
             IBVAP
           </span>
-          <span className="hidden md:inline-flex px-1.5 py-0.5 text-[10px] font-mono-num font-semibold bg-[#007AFF]/15 text-[#007AFF] border border-[#007AFF]/30 rounded">
-            SIMULATION MODE
+          <span className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            ONLINE
           </span>
         </div>
 
@@ -74,12 +97,12 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
 
         {/* Current Sector Selection */}
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-[#6C727A]">Sector:</span>
+          <span className="text-xs text-[#8A8F98]">Sector:</span>
           <select
             id="sector-select"
             value={selectedSectorId}
             onChange={(e) => onSelectSector(e.target.value)}
-            className="h-7 text-xs bg-[#14161A] text-white border border-[#23262B] rounded px-2 pr-6 appearance-none cursor-pointer focus:outline-hidden focus:border-[#007AFF]"
+            className="h-7 text-xs bg-[#14161A] text-white border border-[#23262B] hover:border-[#3A3F4A] rounded px-2 pr-6 appearance-none cursor-pointer focus:outline-hidden focus:border-[#007AFF] transition-colors"
           >
             <option value="ALL">All Sectors</option>
             {sectors.map((sec) => (
@@ -161,10 +184,10 @@ export const TopCommandBar: React.FC<TopCommandBarProps> = ({
             {isRoleMenuOpen && onSwitchUser && (
               <div className="absolute right-8 top-9 w-60 bg-[#0F1115] border border-[#23262B] rounded shadow-2xl p-2 z-50 animate-in fade-in duration-100">
                 <div className="flex items-center justify-between pb-1.5 mb-1.5 border-b border-[#23262B]">
-                  <span className="text-[10px] font-mono uppercase text-[#6C727A] font-semibold">
-                    Simulated Operator Roles
+                  <span className="text-[10px] font-mono uppercase text-[#8A8F98] font-semibold">
+                    Station Operator Profile
                   </span>
-                  <span className="text-[9px] font-mono text-[#007AFF]">SIM DATA</span>
+                  <span className="text-[9px] font-mono text-[#007AFF]">ACTIVE</span>
                 </div>
                 <div className="space-y-1">
                   {simulatedRoles.map((r) => {

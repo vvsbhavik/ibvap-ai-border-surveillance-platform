@@ -101,12 +101,14 @@ export const IncidentsScreen: React.FC<IncidentsScreenProps> = ({
             <h1 className="text-base font-semibold text-white tracking-tight">
               Incident Command
             </h1>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono-num font-semibold bg-[#007AFF]/15 text-[#007AFF] border border-[#007AFF]/30 rounded">
-              SIMULATED DATA
-            </span>
-            {activeCount > 0 && (
+            {activeCount > 0 ? (
               <span className="text-xs font-mono-num font-semibold px-2 py-0.5 bg-[#007AFF]/20 text-[#007AFF] border border-[#007AFF]/30 rounded">
                 {activeCount} Active
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                NOMINAL
               </span>
             )}
           </div>

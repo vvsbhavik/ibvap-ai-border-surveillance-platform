@@ -74,85 +74,107 @@ export const LiveScreen: React.FC<LiveScreenProps> = ({
 
   return (
     <div className="flex-1 flex flex-col gap-3 p-4 sm:p-5 overflow-y-auto select-none">
-      {/* Top Controls Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
-        <div>
+      {/* Unified Surveillance Operations Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-[#23262B] pb-3 shrink-0">
+        <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <h1 className="text-sm font-semibold tracking-wider uppercase text-slate-100">
+            <h1 className="text-base font-semibold text-white tracking-tight">
               Live Monitoring Wall
             </h1>
-            <span className="px-1.5 py-0.5 text-[10px] font-mono-num font-semibold bg-[#007AFF]/15 text-[#007AFF] border border-[#007AFF]/30 rounded">
-              SIMULATED VIDEO FEEDS
+            <span className="flex items-center gap-1 px-2 py-0.5 text-[10px] font-mono font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              FEEDS ACTIVE
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Simulated multi-angle border surveillance streams • Edge analytics bounding overlays
-          </p>
+
+          <div className="h-4 w-px bg-[#23262B]" />
+
+          {/* Sector Filter */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-[#8A8F98]">Sector:</span>
+            <select
+              value={selectedSector}
+              onChange={(e) => setSelectedSector(e.target.value)}
+              className="h-7 text-xs bg-[#14161A] text-white border border-[#23262B] hover:border-[#3A3F4A] rounded px-2 pr-6 appearance-none cursor-pointer focus:outline-hidden focus:border-[#007AFF] transition-colors"
+            >
+              <option value="ALL">All Sectors</option>
+              {sectors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} • {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* AI Bounding Box Overlays */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowAiOverlays(!showAiOverlays)}
-            leftIcon={showAiOverlays ? <Eye className="w-3.5 h-3.5 text-cyan-400" /> : <EyeOff className="w-3.5 h-3.5" />}
-          >
-            {showAiOverlays ? 'AI Overlays ON' : 'AI Overlays OFF'}
-          </Button>
-
-          {/* Virtual Fences & Zones Overlay Toggle */}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setShowZones(!showZones)}
-            leftIcon={<Shield className={`w-3.5 h-3.5 ${showZones ? 'text-[#38BDF8]' : 'text-slate-400'}`} />}
-          >
-            {showZones ? 'Fences & Zones ON' : 'Fences & Zones OFF'}
-          </Button>
+          {/* Overlay Toggles */}
+          <div className="flex items-center bg-[#14161A] border border-[#23262B] rounded p-0.5">
+            <button
+              type="button"
+              onClick={() => setShowAiOverlays(!showAiOverlays)}
+              className={`px-2.5 py-1 text-xs rounded transition-colors cursor-pointer flex items-center gap-1.5 ${
+                showAiOverlays
+                  ? 'bg-[#007AFF]/20 text-[#007AFF] font-medium'
+                  : 'text-[#8A8F98] hover:text-white'
+              }`}
+              title="Toggle AI Detection Bounding Boxes"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>AI</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowZones(!showZones)}
+              className={`px-2.5 py-1 text-xs rounded transition-colors cursor-pointer flex items-center gap-1.5 ${
+                showZones
+                  ? 'bg-[#38BDF8]/20 text-[#38BDF8] font-medium'
+                  : 'text-[#8A8F98] hover:text-white'
+              }`}
+              title="Toggle Virtual Fences & Zones"
+            >
+              <Shield className="w-3.5 h-3.5" />
+              <span>Zones</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTrajectory(!showTrajectory)}
+              className={`px-2.5 py-1 text-xs rounded transition-colors cursor-pointer flex items-center gap-1.5 ${
+                showTrajectory
+                  ? 'bg-[#34C759]/20 text-[#34C759] font-medium'
+                  : 'text-[#8A8F98] hover:text-white'
+              }`}
+              title="Toggle Trajectory Trails"
+            >
+              <Route className="w-3.5 h-3.5" />
+              <span>Trails</span>
+            </button>
+          </div>
 
           {/* Scenario Simulation Runner for CAM-01 */}
-          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-700/80 rounded-xs px-2 py-0.5">
-            <Zap className="w-3 h-3 text-[#F59E0B]" />
-            <span className="text-[10px] font-mono text-slate-400">CAM-01 Scene:</span>
+          <div className="flex items-center gap-1.5 bg-[#14161A] border border-[#23262B] rounded px-2 h-7">
+            <Zap className="w-3 h-3 text-[#FF9500]" />
             <select
               value={activeTestScene}
               onChange={(e) => handleTestSceneChange(e.target.value)}
-              className="h-7 text-[11px] font-mono bg-transparent text-cyan-300 border-none outline-hidden cursor-pointer"
-              title="Select synthetic scenario to test real spatial tracking, fence breaches, and zone events"
+              className="text-xs bg-transparent text-[#E0E2E6] border-none outline-hidden cursor-pointer"
+              title="Select simulated movement scenario for CAM-01 testing"
             >
-              <option value="DEFAULT" className="bg-slate-900 text-slate-200">Default Patrol</option>
-              <option value="PERSON_CROSSING_FENCE" className="bg-slate-900 text-amber-300">⚡ Cross Virtual Fence</option>
-              <option value="PERSON_ENTERING_ZONE" className="bg-slate-900 text-red-300">🛡️ Enter Restricted Zone</option>
-              <option value="PERSON_EXITING_ZONE" className="bg-slate-900 text-blue-300">🚪 Exit Restricted Zone</option>
-              <option value="PERSON_PARALLEL_TO_FENCE" className="bg-slate-900 text-slate-300">↔ Parallel Movement (No Breach)</option>
-              <option value="PERSON_TOUCHING_FENCE_BUT_NOT_CROSSING" className="bg-slate-900 text-yellow-300">⚠️ Fence Proximity / Boundary</option>
-              <option value="TWO_PERSONS_CROSSING" className="bg-slate-900 text-red-400">👥 Two Persons Crossing</option>
-              <option value="TEMPORARY_OCCLUSION_NEAR_ZONE" className="bg-slate-900 text-slate-300">👁️ Occlusion Near Zone</option>
+              <option value="DEFAULT" className="bg-[#14161A] text-white">Scenario: Normal Patrol</option>
+              <option value="PERSON_CROSSING_FENCE" className="bg-[#14161A] text-amber-300">Scenario: Fence Cross</option>
+              <option value="PERSON_ENTERING_ZONE" className="bg-[#14161A] text-red-300">Scenario: Zone Breach</option>
+              <option value="PERSON_EXITING_ZONE" className="bg-[#14161A] text-blue-300">Scenario: Zone Exit</option>
+              <option value="TWO_PERSONS_CROSSING" className="bg-[#14161A] text-red-400">Scenario: Multiple Persons</option>
             </select>
           </div>
 
-          {/* Sector Filter */}
-          <select
-            value={selectedSector}
-            onChange={(e) => setSelectedSector(e.target.value)}
-            className="h-8 text-xs font-mono-num bg-slate-900 text-slate-200 border border-slate-700/80 rounded-xs px-2"
-          >
-            <option value="ALL">All Sectors</option>
-            {sectors.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.code}
-              </option>
-            ))}
-          </select>
-
           {/* Grid Layout Toggles */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xs p-0.5">
+          <div className="flex items-center bg-[#14161A] border border-[#23262B] rounded p-0.5">
             <button
               type="button"
               onClick={() => setLayout('1x1')}
-              className={`p-1.5 rounded-xs cursor-pointer ${
-                layout === '1x1' ? 'bg-slate-800 text-cyan-300' : 'text-slate-400 hover:text-slate-200'
+              className={`p-1.5 rounded cursor-pointer transition-colors ${
+                layout === '1x1' ? 'bg-[#1A1D23] text-white' : 'text-[#8A8F98] hover:text-white'
               }`}
               title="1x1 Solo Focus"
             >
@@ -161,8 +183,8 @@ export const LiveScreen: React.FC<LiveScreenProps> = ({
             <button
               type="button"
               onClick={() => setLayout('2x2')}
-              className={`p-1.5 rounded-xs cursor-pointer ${
-                layout === '2x2' ? 'bg-slate-800 text-cyan-300' : 'text-slate-400 hover:text-slate-200'
+              className={`p-1.5 rounded cursor-pointer transition-colors ${
+                layout === '2x2' ? 'bg-[#1A1D23] text-white' : 'text-[#8A8F98] hover:text-white'
               }`}
               title="2x2 Quad Grid"
             >
@@ -171,86 +193,13 @@ export const LiveScreen: React.FC<LiveScreenProps> = ({
             <button
               type="button"
               onClick={() => setLayout('3x3')}
-              className={`p-1.5 rounded-xs cursor-pointer ${
-                layout === '3x3' ? 'bg-slate-800 text-cyan-300' : 'text-slate-400 hover:text-slate-200'
+              className={`p-1.5 rounded cursor-pointer transition-colors ${
+                layout === '3x3' ? 'bg-[#1A1D23] text-white' : 'text-[#8A8F98] hover:text-white'
               }`}
               title="3x3 Matrix Grid"
             >
               <Grid3X3 className="w-3.5 h-3.5" />
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Tracking HUD Controls Bar (Section 14) */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 bg-[#0F1115] border border-[#23262B] rounded text-xs">
-        <div className="flex items-center gap-2">
-          <Compass className="w-3.5 h-3.5 text-[#38BDF8]" />
-          <span className="font-mono font-bold text-[11px] text-white">TRACKING CONTROLS</span>
-          <span className="text-[10px] font-mono text-[#6C727A]">| Multi-Object Association</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {/* Show/Hide Track IDs */}
-          <button
-            type="button"
-            onClick={() => setShowTrackId(!showTrackId)}
-            className={`px-2 py-0.5 rounded text-[10px] font-mono cursor-pointer border transition-colors ${
-              showTrackId
-                ? 'bg-[#0284C7]/20 border-[#38BDF8] text-[#38BDF8] font-bold'
-                : 'bg-[#14161A] border-[#23262B] text-[#6C727A] hover:text-white'
-            }`}
-            title="Toggle persistent Track IDs (e.g. TRK-CAM-01-0001)"
-          >
-            Track IDs {showTrackId ? 'ON' : 'OFF'}
-          </button>
-
-          {/* Show/Hide Trajectory Trails */}
-          <button
-            type="button"
-            onClick={() => setShowTrajectory(!showTrajectory)}
-            className={`px-2 py-0.5 rounded text-[10px] font-mono cursor-pointer border transition-colors ${
-              showTrajectory
-                ? 'bg-[#0284C7]/20 border-[#38BDF8] text-[#38BDF8] font-bold'
-                : 'bg-[#14161A] border-[#23262B] text-[#6C727A] hover:text-white'
-            }`}
-            title="Toggle historical trajectory vector trails"
-          >
-            Trails {showTrajectory ? 'ON' : 'OFF'}
-          </button>
-
-          {/* Show/Hide Heading / Velocity Vector */}
-          <button
-            type="button"
-            onClick={() => setShowDirection(!showDirection)}
-            className={`px-2 py-0.5 rounded text-[10px] font-mono cursor-pointer border transition-colors ${
-              showDirection
-                ? 'bg-[#0284C7]/20 border-[#38BDF8] text-[#38BDF8] font-bold'
-                : 'bg-[#14161A] border-[#23262B] text-[#6C727A] hover:text-white'
-            }`}
-            title="Toggle heading compass direction indicator"
-          >
-            Direction {showDirection ? 'ON' : 'OFF'}
-          </button>
-
-          <div className="h-3.5 w-px bg-[#23262B] mx-1" />
-
-          {/* Filter by track state (ACTIVE, LOST, ALL) */}
-          <div className="flex items-center gap-1 bg-black/50 p-0.5 rounded border border-[#23262B]">
-            {(['ALL', 'ACTIVE', 'LOST'] as const).map((st) => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => setTrackFilterState(st)}
-                className={`px-1.5 py-0.2 rounded text-[9px] font-mono cursor-pointer ${
-                  trackFilterState === st
-                    ? 'bg-[#0284C7] text-white font-bold'
-                    : 'text-[#6C727A] hover:text-white'
-                }`}
-              >
-                {st}
-              </button>
-            ))}
           </div>
         </div>
       </div>
