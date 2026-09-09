@@ -155,6 +155,40 @@ export class StreamSession {
   }
 
   /**
+   * Submits an actual decoded CCTV frame from real IP Camera / RTSP ingestion.
+   * Enforces frame contract: width, height, timestamp, freshness, and sourceMode = LIVE.
+   */
+  public submitCctvFrame(frame: RawFrame): RawFrame {
+    if (!frame || !frame.width || !frame.height || !frame.timestamp) {
+      throw new Error('Invalid CCTV frame: Missing required dimensions or timestamp');
+    }
+
+    const now = Date.now();
+    const frameAge = now - new Date(frame.timestamp).getTime();
+    if (frameAge > 10000) {
+      console.warn(`[StreamSession] Stale CCTV frame detected (${frameAge}ms old) for ${this.config.cameraId}`);
+    }
+
+    this.framesAcquiredTotal++;
+    frame.sequenceNumber = this.framesAcquiredTotal;
+    frame.isSynthetic = false;
+    if (frame.metadata) {
+      frame.metadata.sourceMode = 'LIVE';
+    }
+
+    this.frameBuffer.push(frame);
+    this.lastHeartbeatAt = frame.timestamp;
+    if (this.connectionState !== 'ONLINE' && this.connectionState !== 'CONNECTED') {
+      this.setConnectionState('ONLINE');
+    }
+    if (this.healthState !== 'HEALTHY') {
+      this.setHealthState('HEALTHY');
+    }
+    this.onFrameAcquired?.(frame);
+    return frame;
+  }
+
+  /**
    * Accepts and buffers an actual live frame captured from a client webcam or media stream.
    * Feeds the raw frame into circular frame buffer for display and AI analytics.
    */
@@ -182,14 +216,15 @@ export class StreamSession {
         sectorName: this.config.sectorName,
         fps: this.config.fps || 30,
         latencyMs: this.measuredLatencyMs || 25,
+        sourceMode: 'LIVE',
         ...frameData.metadata,
       },
     };
 
     this.frameBuffer.push(frame);
     this.lastHeartbeatAt = timestamp;
-    if (this.connectionState !== 'CONNECTED') {
-      this.setConnectionState('CONNECTED');
+    if (this.connectionState !== 'ONLINE' && this.connectionState !== 'CONNECTED') {
+      this.setConnectionState('ONLINE');
     }
     if (this.healthState !== 'HEALTHY') {
       this.setHealthState('HEALTHY');
@@ -299,7 +334,16 @@ export class StreamSession {
   }
 
   private acquireNextFrame(): void {
-    if (this.connectionState !== 'CONNECTED' && this.connectionState !== 'DEGRADED') {
+    if (this.sourceMode === 'LIVE') {
+      // Live camera feeds must only originate from actual CCTV or live stream ingestion
+      return;
+    }
+
+    if (
+      this.connectionState !== 'CONNECTED' &&
+      this.connectionState !== 'ONLINE' &&
+      this.connectionState !== 'DEGRADED'
+    ) {
       return;
     }
 
@@ -509,7 +553,7 @@ export class StreamSession {
     };
   }
 
-  private setConnectionState(newState: StreamConnectionState): void {
+  public setConnectionState(newState: StreamConnectionState): void {
     if (this.connectionState === newState) return;
     const previous = this.connectionState;
     this.connectionState = newState;
@@ -517,7 +561,7 @@ export class StreamSession {
     this.notifyTelemetry();
   }
 
-  private setHealthState(newHealth: StreamHealthState): void {
+  public setHealthState(newHealth: StreamHealthState): void {
     if (this.healthState === newHealth) return;
     this.healthState = newHealth;
     this.notifyTelemetry();

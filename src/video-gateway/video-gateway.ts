@@ -1,5 +1,6 @@
 import { Camera } from '../server/types';
 import { StreamSession, StreamSessionConfig } from './stream-session';
+import { cctvIngestManager } from './cctv-ingest';
 import {
   AiProcessingStatus,
   CameraSourceMode,
@@ -103,6 +104,42 @@ export class VideoGateway {
       this.sessions.set(cam.cameraId, session);
     }
 
+    // Register with hardware/network CCTV ingest manager
+    cctvIngestManager.registerCamera(
+      {
+        cameraId: cam.id,
+        name: cam.name,
+        sectorName: cam.sectorName,
+        streamUrl: cam.streamEndpointReference || '',
+        protocol: (cam.protocol as any) || 'RTSP',
+        targetFps: 2,
+      },
+      (frame) => {
+        session.submitCctvFrame(frame);
+      },
+      (state, error) => {
+        if (state === 'ONLINE' || state === 'CONNECTED') {
+          session.setConnectionState('ONLINE');
+          session.setHealthState('HEALTHY');
+        } else if (state === 'DEGRADED') {
+          session.setConnectionState('DEGRADED');
+          session.setHealthState('DEGRADED');
+        } else if (state === 'OFFLINE') {
+          session.setConnectionState('OFFLINE');
+          session.setHealthState('OFFLINE');
+        } else if (state === 'RECONNECTING') {
+          session.setConnectionState('RECONNECTING');
+        }
+      }
+    );
+
+    // If camera is explicitly configured in LIVE mode, start continuous CCTV ingestion
+    if (cam.sourceMode === 'LIVE' && cam.sourceType !== 'WEBCAM') {
+      cctvIngestManager.startIngest(cam.id).catch((err) => {
+        console.warn(`[VideoGateway] Initial CCTV ingest deferred for ${cam.id}:`, err);
+      });
+    }
+
     return session;
   }
 
@@ -136,6 +173,15 @@ export class VideoGateway {
   public getLatestFrame(cameraId: string): RawFrame | null {
     const session = this.sessions.get(cameraId);
     return session ? session.getLatestFrame() : null;
+  }
+
+  /**
+   * Submits an actual decoded frame from CCTV ingestion.
+   */
+  public submitCctvFrame(frame: RawFrame): RawFrame | null {
+    const session = this.sessions.get(frame.cameraId);
+    if (!session) return null;
+    return session.submitCctvFrame(frame);
   }
 
   /**
@@ -178,6 +224,14 @@ export class VideoGateway {
         sourceAttribution: update.sourceAttribution,
         aiProcessingStatus: update.aiProcessingStatus,
       });
+
+      if (update.sourceMode === 'LIVE' && update.sourceType !== 'WEBCAM') {
+        cctvIngestManager.startIngest(cameraId).catch((err) => {
+          console.warn(`[VideoGateway] Failed to start live CCTV ingest for ${cameraId}:`, err);
+        });
+      } else if (update.sourceMode !== 'LIVE') {
+        cctvIngestManager.stopIngest(cameraId, 'Source mode changed from LIVE');
+      }
     }
     return session.getTelemetry();
   }
@@ -251,6 +305,21 @@ export class VideoGateway {
         detail: 'Camera stream credentials must be stored via secure secret vault references (sec-ref-*), never inline plaintext.',
         timestamp,
       };
+    }
+
+    // If protocol is real network stream (RTSP/RTSPS/HLS), execute real FFmpeg probe & frame extraction
+    if (protocol === 'RTSP' || protocol === 'RTSPS' || protocol === 'HLS') {
+      try {
+        const liveResult = await cctvIngestManager.testStreamConnection(cameraId, endpoint, protocol);
+        return liveResult;
+      } catch (err: any) {
+        return {
+          status: 'CONNECTION_FAILED',
+          success: false,
+          message: `Real stream probe failed: ${err?.message || err}`,
+          timestamp,
+        };
+      }
     }
 
     // 3. Handshake Diagnostics

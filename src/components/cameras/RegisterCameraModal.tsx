@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Camera as CameraIcon, ShieldCheck, Lock, AlertCircle } from 'lucide-react';
 import { Camera, CameraType, CameraProtocol, Sector } from '../../server/types';
+import { api } from '../../api/client';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 

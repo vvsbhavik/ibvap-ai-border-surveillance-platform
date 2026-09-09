@@ -20,8 +20,10 @@ import {
   Eye,
   Layers,
   Gauge,
+  Play,
+  Square,
 } from 'lucide-react';
-import { Camera, CameraStatus, CameraType, CameraProtocol, Sector, User, AiCapabilityStatus, CameraAiAnalyticsConfig } from '../../server/types';
+import { Camera, CameraStatus, CameraType, CameraProtocol, Sector, User, AiCapabilityStatus, CameraAiAnalyticsConfig, CameraSourceType, AiProcessingStatus, CameraSourceMode } from '../../server/types';
 import { StreamTelemetry, StreamFailureMode } from '../../video-gateway/types';
 import { NormalizedDetection, AiSubsystemHealth, AiInferenceConfig } from '../../ai-inference/types';
 import { Track, TrackingSubsystemHealth } from '../../tracking/types';
@@ -85,11 +87,11 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
   const [isPtSupported, setIsPtSupported] = useState(false);
 
   // Live Stream Abstraction State
-  const [sourceMode, setSourceMode] = useState<'LIVE' | 'SIMULATION' | 'OFFLINE' | 'UNAVAILABLE'>('SIMULATION');
-  const [sourceType, setSourceType] = useState<'WEBCAM' | 'HLS' | 'WEBRTC' | 'RTSP' | 'SIMULATED'>('SIMULATED');
+  const [sourceMode, setSourceMode] = useState<CameraSourceMode>('SIMULATION');
+  const [sourceType, setSourceType] = useState<CameraSourceType>('SIMULATED');
   const [sourceAttribution, setSourceAttribution] = useState('');
   const [browserStreamUrl, setBrowserStreamUrl] = useState('');
-  const [aiProcessingStatus, setAiProcessingStatus] = useState<'READY' | 'STANDBY' | 'UNAVAILABLE' | 'ERROR'>('READY');
+  const [aiProcessingStatus, setAiProcessingStatus] = useState<AiProcessingStatus>('READY');
   const [liveState, setLiveState] = useState<CameraLiveState | null>(null);
   const [isTogglingWebcam, setIsTogglingWebcam] = useState(false);
   const [streamSwitchNotice, setStreamSwitchNotice] = useState<string | null>(null);
@@ -117,6 +119,8 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
   // Video Gateway Stream Telemetry & Simulation States
   const [streamTelemetry, setStreamTelemetry] = useState<StreamTelemetry | null>(null);
   const [liveFrameUri, setLiveFrameUri] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simulationNotice, setSimulationNotice] = useState<string | null>(null);
@@ -385,6 +389,34 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
       });
     } finally {
       setIsTestingConnection(false);
+    }
+  };
+
+  const handleConnectStream = async () => {
+    setIsConnecting(true);
+    try {
+      const res = await api.video.connect(camera.id);
+      if (res?.stream) {
+        setStreamTelemetry(res.stream);
+      }
+    } catch (err: any) {
+      alert(`Connect stream failed: ${err.message}`);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const handleDisconnectStream = async () => {
+    setIsDisconnecting(true);
+    try {
+      const res = await api.video.disconnect(camera.id);
+      if (res?.stream) {
+        setStreamTelemetry(res.stream);
+      }
+    } catch (err: any) {
+      alert(`Disconnect stream failed: ${err.message}`);
+    } finally {
+      setIsDisconnecting(false);
     }
   };
 
@@ -698,7 +730,15 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
             <div className="space-y-4">
               {/* Snapshot / Live Frame Preview */}
               <div className="relative aspect-video bg-black rounded overflow-hidden border border-[#23262B]">
-                {liveFrameUri ? (
+                {liveState?.isStreaming && liveState?.mediaStream ? (
+                  <video
+                    ref={drawerVideoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                ) : liveFrameUri ? (
                   <img
                     src={liveFrameUri}
                     alt={camera.name}
@@ -726,11 +766,22 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
                   <span className="font-semibold text-[#007AFF]">{streamTelemetry?.connectionState || camera.status}</span>
                 </div>
 
-                {camera.isSimulated !== false && (
-                  <div className="absolute top-2 right-2 bg-[#DC2626]/85 px-2 py-0.5 rounded border border-[#EF4444]/60 text-[9px] font-mono font-bold text-white shadow-xs">
-                    SIMULATED RTSP FEED
-                  </div>
-                )}
+                <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                  {sourceMode === 'LIVE' ? (
+                    <div className="bg-[#34C759]/90 px-2 py-0.5 rounded border border-[#34C759] text-[9px] font-mono font-bold text-white shadow-xs flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      LIVE ({sourceType})
+                    </div>
+                  ) : camera.isSimulated !== false || sourceMode === 'SIMULATION' ? (
+                    <div className="bg-[#DC2626]/85 px-2 py-0.5 rounded border border-[#EF4444]/60 text-[9px] font-mono font-bold text-white shadow-xs">
+                      SIMULATED RTSP FEED
+                    </div>
+                  ) : (
+                    <div className="bg-[#6C727A]/85 px-2 py-0.5 rounded border border-[#6C727A]/60 text-[9px] font-mono font-bold text-white shadow-xs">
+                      {sourceMode}
+                    </div>
+                  )}
+                </div>
 
                 <div className="absolute bottom-2 right-2 bg-[#0F1115]/90 px-2 py-0.5 rounded border border-[#23262B] text-[10px] font-mono-num text-[#A9ACB1]">
                   {streamTelemetry?.resolution || camera.resolution} · {streamTelemetry?.codec || camera.codec || 'H.265'}
@@ -743,6 +794,71 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
                   aiHealth={aiHealth}
                   aiPipelineEnabled={camera.aiPipelineEnabled}
                 />
+              </div>
+
+              {/* Stream Switch Notice */}
+              {streamSwitchNotice && (
+                <div className="p-2.5 bg-[#007AFF]/10 border border-[#007AFF]/30 rounded text-xs flex items-center gap-2 text-[#007AFF]">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span>{streamSwitchNotice}</span>
+                </div>
+              )}
+
+              {/* Ingestion Source & Live Hardware Gateway Controls */}
+              <div className="p-3 bg-[#0F1115] border border-[#23262B] rounded space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Video className="w-3.5 h-3.5 text-[#007AFF]" />
+                    <span className="text-xs font-semibold text-white">Video Ingestion Source Mode</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant={liveState?.isStreaming ? 'danger' : 'subtle'}
+                      size="sm"
+                      isLoading={isTogglingWebcam}
+                      onClick={handleToggleWebcam}
+                      leftIcon={<Video className="w-3 h-3" />}
+                    >
+                      {liveState?.isStreaming ? 'Stop Station Webcam' : 'Use Station Webcam'}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+                  {(['LIVE', 'SIMULATION', 'OFFLINE', 'UNAVAILABLE'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => handleSwitchSourceMode(mode)}
+                      className={`px-2.5 py-1.5 rounded border text-[11px] font-mono font-medium transition-all text-center cursor-pointer ${
+                        sourceMode === mode
+                          ? 'bg-[#007AFF]/20 text-[#007AFF] border-[#007AFF]/60 font-semibold'
+                          : 'bg-[#14161A] text-[#A9ACB1] border-[#23262B] hover:border-[#343840] hover:text-white'
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-between pt-1 border-t border-[#23262B]/60 text-[11px] text-[#A9ACB1]">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[#6C727A]">Source Type:</span>
+                    <span className="font-mono text-white font-medium">{sourceType}</span>
+                  </div>
+                  {sourceAttribution && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[#6C727A]">Attribution:</span>
+                      <span className="font-mono text-white/90">{sourceAttribution}</span>
+                    </div>
+                  )}
+                  {liveState?.isStreaming && (
+                    <div className="flex items-center gap-1.5 text-[#34C759] font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#34C759] animate-pulse" />
+                      <span>Transmitting ({Math.round(liveState.fps || 15)} FPS)</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Stream Health & Telemetry Metrics */}
@@ -783,7 +899,25 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
                     <Server className="w-3.5 h-3.5 text-[#007AFF]" />
                     <span className="text-xs font-semibold text-white">Stream Pipeline Controls</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <Button
+                      variant="subtle"
+                      size="sm"
+                      isLoading={isConnecting}
+                      onClick={handleConnectStream}
+                      leftIcon={<Play className="w-3 h-3 text-[#34C759]" />}
+                    >
+                      Connect
+                    </Button>
+                    <Button
+                      variant="subtle"
+                      size="sm"
+                      isLoading={isDisconnecting}
+                      onClick={handleDisconnectStream}
+                      leftIcon={<Square className="w-3 h-3 text-[#FF4D4D]" />}
+                    >
+                      Disconnect
+                    </Button>
                     <Button
                       variant="subtle"
                       size="sm"
@@ -791,7 +925,7 @@ export const CameraDetailDrawer: React.FC<CameraDetailDrawerProps> = ({
                       onClick={handleReconnectStream}
                       leftIcon={<RefreshCw className="w-3 h-3" />}
                     >
-                      Reconnect Stream
+                      Reconnect
                     </Button>
                     <Button
                       variant="primary"

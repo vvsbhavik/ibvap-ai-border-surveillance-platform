@@ -11,7 +11,10 @@ export type StreamConnectionState =
   | 'CONFIGURED'
   | 'CONNECTING'
   | 'CONNECTED'
+  | 'ONLINE'
   | 'DEGRADED'
+  | 'RECONNECTING'
+  | 'OFFLINE'
   | 'DISCONNECTED'
   | 'ERROR';
 
@@ -72,6 +75,8 @@ export interface RawFrame {
     opticalCoordinates?: string;
     palette?: string;
     testScene?: SyntheticTestScene;
+    sourceMode?: CameraSourceMode;
+    [key: string]: any;
   };
 }
 

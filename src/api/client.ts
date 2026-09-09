@@ -639,6 +639,16 @@ export const api = {
         `${BASE_URL}/video/streams/${cameraId}/reconnect`,
         { method: 'POST' }
       ),
+    connect: (cameraId: string) =>
+      fetchJson<{ success: boolean; message: string; stream: StreamTelemetry }>(
+        `${BASE_URL}/video/streams/${cameraId}/connect`,
+        { method: 'POST' }
+      ),
+    disconnect: (cameraId: string) =>
+      fetchJson<{ success: boolean; message: string; stream: StreamTelemetry }>(
+        `${BASE_URL}/video/streams/${cameraId}/disconnect`,
+        { method: 'POST' }
+      ),
     getFrame: (cameraId: string) =>
       fetchJson<{ frame: RawFrame }>(`${BASE_URL}/video/streams/${cameraId}/frame`),
     simulateFailure: (cameraId: string, failureMode: StreamFailureMode) =>

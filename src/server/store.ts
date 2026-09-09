@@ -4,6 +4,7 @@
 // ============================================================================
 
 import crypto from 'crypto';
+import { credentialVault } from '../video-gateway/credential-vault';
 import {
   User,
   Sector,
@@ -2306,9 +2307,13 @@ export function sanitizeStreamEndpoint(rawEndpoint?: string, cameraId?: string):
   const match = trimmed.match(credUrlRegex);
 
   if (match) {
-    const [, protocol, , , host, path] = match;
+    const [, protocol, username, password, host, path] = match;
     const sanitizedUri = `${protocol}://${host}${path || ''}`;
-    const token = `sec-ref-${(cameraId || 'cam').toLowerCase().replace(/[^a-z0-9]/g, '')}-${Date.now().toString(36)}`;
+    const token = credentialVault.store(cameraId || 'cam', {
+      rawStreamUrl: trimmed,
+      username,
+      password,
+    });
     return {
       streamEndpointReference: sanitizedUri,
       credentialSecretRef: token,
@@ -2316,6 +2321,12 @@ export function sanitizeStreamEndpoint(rawEndpoint?: string, cameraId?: string):
   }
 
   // Already sanitized or reference
+  if (cameraId && (trimmed.startsWith('rtsp://') || trimmed.startsWith('rtsps://') || trimmed.startsWith('http'))) {
+    credentialVault.store(cameraId, {
+      rawStreamUrl: trimmed,
+    });
+  }
+
   return {
     streamEndpointReference: trimmed,
     credentialSecretRef: cameraId ? `sec-ref-${cameraId.toLowerCase().replace(/[^a-z0-9]/g, '')}-ref` : undefined,

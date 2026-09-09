@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { videoGateway } from '../../video-gateway/video-gateway';
+import { cctvIngestManager } from '../../video-gateway/cctv-ingest';
 import { dataStore } from '../store';
 import { logger } from '../logger';
 import {
@@ -243,6 +244,54 @@ videoRouter.get('/streams/:cameraId/frame', (req: Request, res: Response) => {
   }
 
   res.json({ frame });
+});
+
+/**
+ * GET /api/v1/video/streams/:cameraId/mjpeg
+ * Continuous live MJPEG stream (multipart/x-mixed-replace) directly from FFmpeg ingestion.
+ */
+videoRouter.get('/streams/:cameraId/mjpeg', (req: Request, res: Response) => {
+  const { cameraId } = req.params;
+  const attached = cctvIngestManager.attachMjpegClient(cameraId, res);
+  if (!attached) {
+    res.status(404).send('Camera stream not currently active or available in CCTV ingest manager.');
+  }
+});
+
+/**
+ * POST /api/v1/video/streams/:cameraId/connect
+ * Starts / connects ingestion for this camera stream.
+ */
+videoRouter.post('/streams/:cameraId/connect', async (req: Request, res: Response) => {
+  const { cameraId } = req.params;
+  const cam = dataStore.cameras.find((c) => c.id === cameraId || c.cameraId === cameraId);
+  if (!cam) {
+    res.status(404).json({ error: `Camera ${cameraId} not found` });
+    return;
+  }
+
+  if (cam.sourceMode === 'LIVE' && cam.sourceType !== 'WEBCAM') {
+    await cctvIngestManager.startIngest(cam.id);
+  }
+  const stream = videoGateway.getStream(cam.id);
+  res.json({ success: true, message: `Camera ${cameraId} stream connected`, stream });
+});
+
+/**
+ * POST /api/v1/video/streams/:cameraId/disconnect
+ * Disconnects ingestion for this camera stream.
+ */
+videoRouter.post('/streams/:cameraId/disconnect', (req: Request, res: Response) => {
+  const { cameraId } = req.params;
+  const cam = dataStore.cameras.find((c) => c.id === cameraId || c.cameraId === cameraId);
+  if (!cam) {
+    res.status(404).json({ error: `Camera ${cameraId} not found` });
+    return;
+  }
+
+  cctvIngestManager.stopIngest(cam.id, 'Operator manual disconnect');
+  const stream = videoGateway.getStream(cam.id);
+  res.json({ success: true, message: `Camera ${cameraId} stream disconnected`, stream });
 });
 
 /**
